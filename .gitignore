@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+heading_log.jsonl
+error.log
+tiles/
+parser.log
