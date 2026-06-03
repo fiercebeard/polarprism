@@ -2,12 +2,10 @@
 import asyncio
 import sys
 import traceback
-import math
-from datetime import datetime, timezone
 
 import pygame
 
-from theme import BG, NAV_WIDTH_RATIO, TAB_HEIGHT
+from theme import BG, NAV_WIDTH_RATIO
 from signalk.models import State
 from signalk.client import (
     ws_reader, fetch_vessel_name, fetch_device_names,
@@ -16,7 +14,6 @@ from signalk.client import (
 import nav
 import tabs
 from pages import navigation, heading, sailing, settings
-from chart.renderer import handle_chart_scroll, handle_chart_drag
 
 FPS = 30
 
@@ -39,10 +36,6 @@ async def main():
         font_sm = pygame.font.SysFont("monospace", 14)
     except Exception:
         font_sm = pygame.font.Font(None, 16)
-    try:
-        font_title = pygame.font.SysFont("monospace", 24, bold=True)
-    except Exception:
-        font_title = pygame.font.Font(None, 26)
 
     state = State()
 
@@ -70,28 +63,21 @@ async def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_LEFTBRACKET:
-                    state.heading_offset -= 0.5
-                elif event.key == pygame.K_RIGHTBRACKET:
-                    state.heading_offset += 0.5
-                elif event.key == pygame.K_f:
-                    state.emulation_active = not state.emulation_active
-                    if not state.emulation_active:
-                        state.fusion_heading = None
-                elif event.key == pygame.K_c:
-                    lat = state.position.get("lat")
-                    lon = state.position.get("lon")
-                    if lat is not None and lon is not None:
-                        state.chart_center_lat = lat
-                        state.chart_center_lon = lon
-                elif event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
-                    if state.chart_zoom < 13:
-                        state.chart_zoom += 1
-                elif event.key == pygame.K_MINUS:
-                    if state.chart_zoom > 7:
-                        state.chart_zoom -= 1
-
-                heading.handle_key(state, event.key, state.active_tab)
+                elif state.active_nav == "navigation":
+                    if event.key == pygame.K_c:
+                        lat = state.position.get("lat")
+                        lon = state.position.get("lon")
+                        if lat is not None and lon is not None:
+                            state.chart_center_lat = lat
+                            state.chart_center_lon = lon
+                    elif event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
+                        if state.chart_zoom < 13:
+                            state.chart_zoom += 1
+                    elif event.key == pygame.K_MINUS:
+                        if state.chart_zoom > 7:
+                            state.chart_zoom -= 1
+                if state.active_nav == "heading":
+                    heading.handle_key(state, event.key, state.active_tab)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -120,15 +106,10 @@ async def main():
                             state.dragging = True
                             state.drag_start = (mx, my)
 
-                if event.button == 4:
-                    if mx >= content_x:
-                        content_rect = nav.get_content_rect(win_w, win_h)
-                        navigation.handle_scroll(state, mx, my, content_rect, 1)
-
-                elif event.button == 5:
-                    if mx >= content_x:
-                        content_rect = nav.get_content_rect(win_w, win_h)
-                        navigation.handle_scroll(state, mx, my, content_rect, -1)
+                if event.button in (4, 5) and mx >= content_x and state.active_nav == "navigation":
+                    content_rect = nav.get_content_rect(win_w, win_h)
+                    direction = 1 if event.button == 4 else -1
+                    navigation.handle_scroll(state, mx, my, content_rect, direction)
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
