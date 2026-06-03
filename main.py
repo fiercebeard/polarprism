@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import os
 import sys
 import traceback
 
@@ -10,12 +11,15 @@ from signalk.models import State
 from signalk.client import (
     ws_reader, fetch_vessel_name, fetch_device_names,
     fetch_multi_values, logger, ws_writer, log_error, set_asyncio_sleep,
+    performance_logger, write_log_event,
 )
+from polars.parser import discover_polars, load_saildef, load_sailselect
 import nav
 import tabs
 from pages import navigation, heading, sailing, settings
 
 FPS = 30
+POLARS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polars")
 
 
 async def main():
@@ -39,6 +43,20 @@ async def main():
 
     state = State()
 
+    polars = discover_polars(POLARS_DIR)
+    for p in polars:
+        state.polar_data[p.name] = p
+        state.polar_names.append(p.name)
+    if state.polar_names:
+        state.polar_active = state.polar_names[0]
+
+    saildef_path = os.path.join(POLARS_DIR, "US50_Rated_BestPerf.saildef")
+    state.saildef = load_saildef(saildef_path)
+    state.saildef.setdefault(3, "Code0")
+
+    sailselect_path = os.path.join(POLARS_DIR, "US50_Rated_BestPerf.sailselect")
+    state.sailselect = load_sailselect(sailselect_path)
+
     set_asyncio_sleep(asyncio.sleep)
 
     asyncio.ensure_future(fetch_vessel_name(state))
@@ -47,6 +65,7 @@ async def main():
     asyncio.ensure_future(ws_reader(state))
     asyncio.ensure_future(logger(state))
     asyncio.ensure_future(ws_writer(state))
+    asyncio.ensure_future(performance_logger(state))
 
     running = True
     dragging_chart = False
@@ -78,6 +97,10 @@ async def main():
                             state.chart_zoom -= 1
                 if state.active_nav == "heading":
                     heading.handle_key(state, event.key, state.active_tab)
+                if state.active_nav == "sailing":
+                    result = sailing.handle_key(state, event.key, state.active_tab)
+                    if result and result.startswith("log_"):
+                        asyncio.ensure_future(_handle_log_event(state, result))
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -98,13 +121,17 @@ async def main():
                     continue
 
                 if event.button == 1 and mx >= content_x:
-                    content_rect = tabs_x, tabs_y, tabs_w, tabs_h = nav.get_content_rect(win_w, win_h)
+                    content_rect = nav.get_content_rect(win_w, win_h)
                     if state.active_nav == "navigation":
                         chart_result = navigation.handle_click(state, mx, my, content_rect)
                         if chart_result == "drag":
                             dragging_chart = True
                             state.dragging = True
                             state.drag_start = (mx, my)
+                    elif state.active_nav == "sailing":
+                        result = sailing.handle_click(state, mx, my, content_rect, state.active_tab)
+                        if result and result.startswith("log_"):
+                            asyncio.ensure_future(_handle_log_event(state, result))
 
                 if event.button in (4, 5) and mx >= content_x and state.active_nav == "navigation":
                     content_rect = nav.get_content_rect(win_w, win_h)
@@ -163,6 +190,27 @@ async def main():
         await asyncio.sleep(0)
 
     pygame.quit()
+
+
+async def _handle_log_event(state, result):
+    if result == "log_start":
+        await write_log_event(state, "log_start", {
+            "polar": state.polar_active,
+            "active_sails": list(state.active_sails),
+            "sailing_state": state.sailing_state,
+        })
+    elif result == "log_stop":
+        await write_log_event(state, "log_stop", {
+            "samples": state.log_sample_count,
+        })
+    elif result == "state_change":
+        await write_log_event(state, "sailing_state_change", {
+            "to": state.sailing_state,
+        })
+    elif result == "sail_toggle":
+        await write_log_event(state, "sail_change", {
+            "active_sails": list(state.active_sails),
+        })
 
 
 if __name__ == "__main__":

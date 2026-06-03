@@ -84,7 +84,7 @@ NAV_ITEM_LABELS = {
 NAV_TABS = {
     "navigation": ["Chart"],
     "heading": ["Compass", "Diagnostics", "Fusion"],
-    "sailing": ["Polars", "Wind"],
+    "sailing": ["Polars", "Wind", "Log"],
     "settings": ["SignalK", "Display"],
 }
 
@@ -100,3 +100,41 @@ TAB_ACCENT_THICKNESS = 2
 DROPDOWN_RADIUS = 6
 DROPDOWN_PAD_V = 8
 DROPDOWN_PAD_H = 12
+
+POLAR_RING = (30, 40, 55)
+POLAR_GRID = (40, 50, 70)
+POLAR_SPEED_LINE = (60, 80, 110)
+POLAR_BOAT_DOT = (255, 200, 60)
+POLAR_TARGET_DOT = (80, 220, 80)
+POLAR_FILL = (20, 25, 35)
+
+TWS_COLORS = [
+    (100, 180, 255),
+    (80, 220, 160),
+    (160, 230, 80),
+    (240, 220, 60),
+    (255, 170, 40),
+    (255, 110, 60),
+    (240, 70, 80),
+    (200, 60, 140),
+]
+
+WIND_TRUE = (100, 200, 255)
+WIND_APPARENT = (255, 200, 80)
+WIND_DIR_ARROW = (180, 220, 255)
+
+SAILING_ACTIVE = (80, 220, 80)
+SAILING_INACTIVE = (80, 80, 80)
+MOTORING_COLOR = (200, 120, 40)
+IDLE_COLOR = (100, 100, 120)
+
+SAIL_COLORS = {
+    "Jib": (100, 180, 255),
+    "Code0": (160, 230, 80),
+    "Asym": (255, 110, 60),
+}
+
+BTN_BG = (30, 40, 55)
+BTN_BORDER = (60, 80, 110)
+BTN_ACTIVE_BG = (40, 60, 90)
+BTN_ACTIVE_BORDER = (251, 191, 36)

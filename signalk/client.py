@@ -1,9 +1,11 @@
 import aiofiles
 import json
+import math
 import os
 from datetime import datetime, timezone
 
 from .models import State, SK_WS_URL, PATH_MAP, update_from_delta, compute_fusion_heading, rad_to_deg, rad_to_deg_signed, derive_true_heading
+from polars.parser import lookup_speed, compute_true_wind, lookup_recommended_sail
 import websockets
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "heading_log.jsonl")
@@ -162,6 +164,100 @@ async def logger(state):
         except OSError:
             pass
         state.last_log_time = now.timestamp()
+
+
+async def performance_logger(state):
+    PERF_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sailing_logs")
+    os.makedirs(PERF_LOG_DIR, exist_ok=True)
+    PERF_LOG_INTERVAL = 1.0
+
+    while True:
+        await asyncio_sleep(PERF_LOG_INTERVAL)
+
+        if not state.sailing_log_active or state.sailing_state != "sailing":
+            continue
+
+        now = datetime.now(timezone.utc)
+        ht_val = derive_true_heading(state)
+        awa_rad = state.values.get("windAngleApparent")
+        aws_ms = state.values.get("windSpeedApparent")
+        stw_ms = state.values.get("speedThroughWater")
+        sog_ms = state.values.get("speedOverGround")
+        cog_rad = state.values.get("cogTrue")
+        hm_rad = state.values.get("headingMagnetic")
+        mv_rad = state.values.get("magneticVariation")
+        rot_rad = state.values.get("rateOfTurn")
+
+        twa_rad, tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
+        twa_deg = math.degrees(twa_rad) if twa_rad is not None else None
+        tws_kts = tws_ms * 1.94384 if tws_ms is not None else None
+        awa_deg = math.degrees(awa_rad) if awa_rad is not None else None
+        aws_kts = aws_ms * 1.94384 if aws_ms is not None else None
+        stw_kts = stw_ms * 1.94384 if stw_ms is not None else None
+        sog_kts = sog_ms * 1.94384 if sog_ms is not None else None
+
+        ht_deg = rad_to_deg(ht_val) if ht_val is not None else None
+        cog_deg = rad_to_deg(cog_rad) if cog_rad is not None else None
+
+        twd_deg = None
+        if ht_deg is not None and twa_deg is not None:
+            twd_deg = (ht_deg + twa_deg) % 360
+
+        polar_target = None
+        polar_perf = None
+        if twa_deg is not None and tws_kts is not None and state.polar_active in state.polar_data:
+            polar = state.polar_data[state.polar_active]
+            polar_target = lookup_speed(polar, abs(twa_deg), tws_kts)
+            if polar_target is not None and polar_target > 0 and stw_kts is not None:
+                polar_perf = stw_kts / polar_target * 100.0
+
+        entry = {
+            "ts": now.isoformat(),
+            "position": {"lat": state.position.get("lat"), "lon": state.position.get("lon")},
+            "headingTrue": ht_deg,
+            "cogTrue": cog_deg,
+            "sog": round(sog_kts, 2) if sog_kts is not None else None,
+            "stw": round(stw_kts, 2) if stw_kts is not None else None,
+            "twa": round(twa_deg, 1) if twa_deg is not None else None,
+            "tws": round(tws_kts, 1) if tws_kts is not None else None,
+            "twd": round(twd_deg, 1) if twd_deg is not None else None,
+            "awa": round(awa_deg, 1) if awa_deg is not None else None,
+            "aws": round(aws_kts, 1) if aws_kts is not None else None,
+            "sailing_state": state.sailing_state,
+            "active_sails": list(state.active_sails),
+            "polar_name": state.polar_active,
+            "polar_target_speed": round(polar_target, 2) if polar_target is not None else None,
+            "polar_performance_pct": round(polar_perf, 1) if polar_perf is not None else None,
+        }
+
+        if state.performance_log_file is None:
+            fname = now.strftime("sailing_%Y%m%d_%H%M%S.jsonl")
+            state.performance_log_file = os.path.join(PERF_LOG_DIR, fname)
+
+        try:
+            async with aiofiles.open(state.performance_log_file, mode="a") as f:
+                await f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        except OSError:
+            pass
+
+        state.log_sample_count += 1
+        if polar_perf is not None:
+            state.log_perf_sum += polar_perf
+
+
+async def write_log_event(state, event_type, data=None):
+    if not state.sailing_log_active:
+        return
+    now = datetime.now(timezone.utc)
+    entry = {"ts": now.isoformat(), "event": event_type}
+    if data:
+        entry.update(data)
+    if state.performance_log_file:
+        try:
+            async with aiofiles.open(state.performance_log_file, mode="a") as f:
+                await f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        except OSError:
+            pass
 
 
 async def ws_writer(state):

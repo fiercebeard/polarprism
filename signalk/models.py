@@ -43,6 +43,19 @@ class State:
         self.heading_offset = 0.0
         self.active_nav = "heading"
         self.active_tab = 1
+        self.polar_data = {}
+        self.polar_names = []
+        self.polar_active = ""
+        self.polar_tws_index = 0
+        self.saildef = {}
+        self.sailselect = None
+        self.active_sails = []
+        self.available_sails = ["Jib", "Code0", "Asym"]
+        self.sailing_log_active = False
+        self.sailing_state = "idle"
+        self.performance_log_file = None
+        self.log_sample_count = 0
+        self.log_perf_sum = 0.0
 
 
 def rad_to_deg(rad):
