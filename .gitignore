@@ -4,3 +4,9 @@ heading_log.jsonl
 error.log
 tiles/
 parser.log
+*.pyc
+__pycache__/
+heading_log.jsonl
+error.log
+tiles/
+parser.log
