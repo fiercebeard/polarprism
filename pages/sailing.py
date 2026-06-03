@@ -170,12 +170,14 @@ def _draw_polar_panel(surface, font, font_sm, state, rect, chart_w, polar):
         pygame.draw.rect(surface, border, btn, 1, border_radius=4)
         short = name.replace("US50_Rated_", "")
         tc = TEXT_WHITE if is_active else TEXT_MUTED
-        tl = font_sm.render(short, True, tc)
+        tl = font_sm.render(f"{i+1}:{short}", True, tc)
         surface.blit(tl, (px + 6, py + 2))
         py += 24
 
     py += 4
     heading("--- Wind Speed (TWS) ---")
+    key_hint = font_sm.render("W/S", True, TEXT_DIM)
+    surface.blit(key_hint, (px + pw - key_hint.get_width() - 2, py - row_h + 4))
     btn_w = min(40, (pw - 10) // max(len(polar.tws_list), 1))
     for i, tws in enumerate(polar.tws_list):
         bx = px + i * (btn_w + 4)
@@ -386,7 +388,7 @@ def draw_log(surface, font, font_sm, state, rect):
     btn_bg = (160, 40, 40) if state.sailing_log_active else (40, 120, 60)
     pygame.draw.rect(surface, btn_bg, btn, border_radius=6)
     pygame.draw.rect(surface, TEXT_WHITE, btn, 1, border_radius=6)
-    btn_text = "STOP LOG" if state.sailing_log_active else "START LOG"
+    btn_text = "STOP LOG [L]" if state.sailing_log_active else "START LOG [L]"
     bt = font.render(btn_text, True, TEXT_WHITE)
     surface.blit(bt, (btn.x + btn_w // 2 - bt.get_width() // 2, btn.y + btn_h // 2 - bt.get_height() // 2))
     py += btn_h + 16
@@ -402,7 +404,7 @@ def draw_log(surface, font, font_sm, state, rect):
         pygame.draw.rect(surface, bg, brect, border_radius=4)
         pygame.draw.rect(surface, border_c, brect, 1, border_radius=4)
         tc = TEXT_WHITE if is_active else TEXT_MUTED
-        tl = font_sm.render(sname.capitalize(), True, tc)
+        tl = font_sm.render(f"{i+1}:{sname.capitalize()}", True, tc)
         surface.blit(tl, (brect.x + bw // 2 - tl.get_width() // 2, brect.y + 4))
     py += 34
 
