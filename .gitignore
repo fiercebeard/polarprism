@@ -2,7 +2,31 @@ __pycache__/
 *.pyc
 heading_log.jsonl
 error.log
-tiles/
 parser.log
+
+# User runtime data
+tiles/
 sailing_logs/
+logs/raw/
+
+# User-specific config (copy polarprism.toml.example to polarprism.toml)
+polarprism.toml
+
+# Boat-specific / binary artifacts not part of the distributable app
+*.xlsx
+*.pdf
+# Generated measured-polar outputs (from log_analysis.py polar)
+polars/*_Measured.csv
+polars/*_vs_*.png
+
+# Editor / tooling
+.opencode/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Developer / AI agent guidance — not part of the published app
+AGENTS.md
+
+# Old reference docs (no longer used)
 qtvlm_docs/

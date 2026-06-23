@@ -1,12 +1,16 @@
 import pygame
+
 from theme import (
-    NAV_ITEMS, NAV_ITEM_LABELS, NAV_TABS,
-    NAV_WIDTH_RATIO, TAB_HEIGHT, FILTER_ROW_HEIGHT, CONTENT_PAD, NAV_GAP,
-    NAV_INACTIVE, NAV_ACTIVE_BG, NAV_ACTIVE_TEXT,
-    NAV_BG, BG, TAB_INACTIVE, TAB_ACTIVE, TAB_ACCENT, TAB_ACCENT_THICKNESS,
-    TEXT_WHITE, TEXT_MUTED,
+    NAV_ACTIVE_BG,
+    NAV_ACTIVE_TEXT,
+    NAV_BG,
+    NAV_GAP,
+    NAV_INACTIVE,
+    NAV_ITEM_LABELS,
+    NAV_ITEMS,
+    NAV_WIDTH_RATIO,
+    TAB_HEIGHT,
 )
-from signalk.models import State
 
 
 def get_layout(window_w, window_h):
@@ -19,7 +23,7 @@ def get_layout(window_w, window_h):
 
 
 def get_content_rect(window_w, window_h):
-    nav_w, cx, cy, cw, ch = get_layout(window_w, window_h)
+    _nav_w, cx, cy, cw, ch = get_layout(window_w, window_h)
     tab_h = TAB_HEIGHT
     return cx, cy + tab_h, cw, ch - tab_h
 

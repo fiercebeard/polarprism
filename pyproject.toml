@@ -1,0 +1,39 @@
+[project]
+name = "polarprism"
+version = "0.1.0"
+description = "Real-time sailing navigation instrument"
+requires-python = ">=3.11"
+dependencies = [
+    "pygame",
+    "aiofiles",
+    "websockets",
+    "nmea2000",
+]
+
+[project.optional-dependencies]
+# Enables in-app editing of polarprism.toml (writing TOML). Without it,
+# save_config falls back to writing a JSON file.
+config = ["tomli_w"]
+# Enables the measured-polar comparison plot in log_analysis.py polar.
+plot = ["matplotlib"]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+polarprism = "main:cli"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "UP017"]
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_configs = true

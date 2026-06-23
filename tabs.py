@@ -1,9 +1,16 @@
 import pygame
+
 from theme import (
-    NAV_TABS, TAB_INACTIVE, TAB_ACTIVE, TAB_ACCENT,
-    TAB_HEIGHT, TAB_ACCENT_THICKNESS, TEXT_WHITE, TEXT_MUTED, BG,
+    BG,
+    CONNECTED,
+    DISCONNECTED,
+    NAV_TABS,
+    TAB_ACCENT,
+    TAB_ACCENT_THICKNESS,
+    TAB_ACTIVE,
+    TAB_HEIGHT,
+    TAB_INACTIVE,
 )
-from signalk.models import State
 
 
 def draw_tabs(surface, font, font_sm, state, content_x, content_w):
@@ -22,18 +29,18 @@ def draw_tabs(surface, font, font_sm, state, content_x, content_w):
             text_w = ts.get_width()
             surface.blit(ts, (x, (TAB_HEIGHT - ts.get_height()) // 2))
             accent_y = TAB_HEIGHT - TAB_ACCENT_THICKNESS
-            pygame.draw.rect(surface, TAB_ACCENT,
-                             (x, accent_y, text_w, TAB_ACCENT_THICKNESS))
+            pygame.draw.rect(surface, TAB_ACCENT, (x, accent_y, text_w, TAB_ACCENT_THICKNESS))
         else:
             ts = font.render(tab_name, True, TAB_INACTIVE)
             surface.blit(ts, (x, (TAB_HEIGHT - ts.get_height()) // 2))
         x += ts.get_width() + 32
 
-    conn_color = (0, 200, 80) if state.connected else (200, 50, 50)
+    conn_color = CONNECTED if state.connected else DISCONNECTED
     conn_text = "WS:OK" if state.connected else "WS:--"
     ct = font_sm.render(conn_text, True, conn_color)
-    surface.blit(ct, (content_x + content_w - ct.get_width() - 12,
-                       (TAB_HEIGHT - ct.get_height()) // 2))
+    surface.blit(
+        ct, (content_x + content_w - ct.get_width() - 12, (TAB_HEIGHT - ct.get_height()) // 2)
+    )
 
 
 def get_tab_click(mx, my, font, state, content_x, content_w):

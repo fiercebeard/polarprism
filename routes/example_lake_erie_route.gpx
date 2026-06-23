@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Meteo-Routing AI" xmlns="http://www.topografix.com/GPX/1/1">
+  <route>
+    <name>Mills Presidents Trophy Course</name>
+    <rtept lat="41.761667" lon="-83.328333">
+      <name>START-Toledo Light</name>
+    </rtept>
+    <rtept lat="41.821667" lon="-83.195000">
+      <name>TURN1-Toledo Channel</name>
+    </rtept>
+    <rtept lat="41.663333" lon="-82.973333">
+      <name>PASS1-Niagara Reef</name>
+    </rtept>
+    <rtept lat="41.591667" lon="-82.873333">
+      <name>TURN2-Catawba Buoy</name>
+    </rtept>
+    <rtept lat="41.591667" lon="-82.833333">
+      <name>PASS2-Mouse Island</name>
+    </rtept>
+    <rtept lat="41.601667" lon="-82.841667">
+      <name>PASS3-Scott Pt Shoal</name>
+    </rtept>
+    <rtept lat="41.678333" lon="-82.785000">
+      <name>TURN3-Ballast Island</name>
+    </rtept>
+    <rtept lat="41.658333" lon="-82.806667">
+      <name>FINISH-Put-in-Bay</name>
+    </rtept>
+  </route>
+</gpx>

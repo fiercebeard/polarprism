@@ -1,0 +1,70 @@
+# PolarPrism Configuration
+# Copy this file to polarprism.toml and edit as needed.
+# All sections are optional — defaults will be used if omitted.
+
+[signalk]
+# WebSocket URL for Signal K server
+url = "ws://localhost:3000/signalk/v1/stream"
+
+[chart]
+# Default chart center position — Lake Erie (sample). Override for your waters.
+default_lat = 41.49
+default_lon = -81.73
+default_zoom = 9
+
+[paths]
+# Relative to project root, or absolute paths
+# polars_dir = "polars"
+# routes_dir = "routes"
+# tiles_dir = "tiles"
+# log_dir = "sailing_logs"
+# raw_dir = "logs/raw"   # where raw Signal K server logs are auto-converted
+
+[display]
+# fps = 30
+
+[tile]
+# Fetch missing map tiles from the network
+# online = true
+# url = "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
+
+[logging]
+# Auto-convert raw Signal K server logs (skserver-raw_*.log) found in raw_dir
+# on startup into sailing_logs/*.jsonl. Off by default.
+# auto_convert_raw = false
+# Your local UTC offset in hours (e.g. -4 for EDT, +1 for CET). Used only
+# when auto_convert_raw is true and the raw log timestamps are UTC.
+# local_tz_offset = 0
+# Directory for the rotating error log (default: ~/.local/share/polarprism).
+# Two handlers: stderr + rotating file (1 MiB x 3 backups).
+# error_log_dir = "~/.local/share/polarprism"
+
+# Sail configuration — auto-detected from .saildef files in the polars directory.
+# Override here if you want different groupings or names. The values below are
+# examples mirroring the shipped example_J105 J/105 sample polars; replace with your
+# own sail names.
+#
+# [[sail.groups]]
+# name = "headsail"
+# sails = ["Jib", "Code0"]
+#
+# [[sail.groups]]
+# name = "downwind"
+# sails = ["Asym"]
+#
+# [sail.polar_map]
+# Jib = "Jib"
+# Code0 = "Code0"
+# Asym = "Asym"
+#
+# Note: polar_map drives polar display names only; selecting a sail never
+# changes the active polar. Choose the polar explicitly via the Polar Profile
+# buttons (or K_1-K_4) on the Polars page.
+#
+# [sail.colors]
+# Jib = [100, 180, 255]
+# Code0 = [160, 230, 80]
+# Asym = [255, 110, 60]
+#
+# Strip this prefix from polar filenames for display
+# polar_name_prefix = ""

@@ -1,33 +1,35 @@
-import aiofiles
 import json
+import logging
 import math
 import os
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
-from .models import State, SK_WS_URL, PATH_MAP, update_from_delta, compute_fusion_heading, rad_to_deg, rad_to_deg_signed, derive_true_heading
-from polars.parser import lookup_speed, compute_true_wind, lookup_recommended_sail
+import aiofiles
 import websockets
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "heading_log.jsonl")
-ERROR_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "error.log")
+from polars.parser import auto_select_tws_index, compute_true_wind, lookup_speed
+
+from .models import (
+    MS_TO_KNOTS,
+    derive_true_heading,
+    rad_to_deg,
+    rad_to_deg_signed,
+    update_from_delta,
+)
+
 LOG_INTERVAL = 1.0
 
+_log = logging.getLogger("polarprism")
 
-def log_error(msg):
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    line = f"{ts} {msg}\n"
-    try:
-        with open(ERROR_LOG, "a") as f:
-            f.write(line)
-    except Exception:
-        pass
+_log_file: str = ""
+_perf_log_dir: str = ""
 
 
-async def ws_reader(state):
-    import urllib.request
+async def ws_reader(state, ws_url: str):
     while True:
         try:
-            async with websockets.connect(SK_WS_URL) as ws:
+            async with websockets.connect(ws_url) as ws:
                 state.connected = True
                 sub = {
                     "context": "vessels.self",
@@ -45,97 +47,144 @@ async def ws_reader(state):
                         {"path": "steering.rudderAngle"},
                         {"path": "environment.wind.angleApparent"},
                         {"path": "environment.wind.speedApparent"},
+                        {"path": "navigation.courseGreatCircle.bearingTrue"},
+                        {"path": "navigation.course.nextPoint.bearingTrue"},
+                        {"path": "navigation.course.nextPoint.bearingMagnetic"},
+                        {"path": "navigation.course.nextPoint.distance"},
+                        {"path": "navigation.course.previousPoint.bearingTrue"},
+                        {"path": "navigation.courseRhumbline.bearingTrue"},
+                        {"path": "navigation.course.calcValues.bearingTrue"},
+                        {"path": "navigation.course.calcValues.bearingMagnetic"},
+                        {"path": "navigation.course.calcValues.velocityMadeGood"},
+                        {"path": "navigation.course.calcValues.crossTrackError"},
+                        {"path": "navigation.course.calcValues.distance"},
+                        {"path": "navigation.courseGreatCircle.nextPoint.bearingTrue"},
+                        {"path": "navigation.courseGreatCircle.nextPoint.distance"},
+                        {"path": "navigation.courseGreatCircle.nextPoint.velocityMadeGood"},
+                        {"path": "navigation.courseGreatCircle.crossTrackError"},
+                        {"path": "navigation.courseGreatCircle.bearingTrackTrue"},
                         {"path": "name"},
                     ],
                 }
                 await ws.send(json.dumps(sub))
                 async for msg in ws:
-                    update_from_delta(state, msg)
+                    text = msg.decode() if isinstance(msg, bytes) else msg
+                    update_from_delta(state, text)
         except (ConnectionRefusedError, OSError, websockets.InvalidURI):
-            pass
+            _log.debug("ws_reader: connection refused/invalid URL: %s", ws_url)
         except Exception as e:
-            log_error(f"ws_reader: {e}")
+            _log.error("ws_reader: %s", e, exc_info=True)
         state.connected = False
-        await asyncio_sleep(2)
+        await _sleep(2)
 
 
-asyncio_sleep = None
+asyncio_sleep: Callable[[float], Awaitable[None]] | None = None
 
 
-def set_asyncio_sleep(fn):
+def set_asyncio_sleep(fn: Callable[[float], Awaitable[None]]) -> None:
     global asyncio_sleep
     asyncio_sleep = fn
 
 
-async def fetch_vessel_name(state):
+def set_log_paths(log_file: str, perf_log_dir: str) -> None:
+    global _log_file, _perf_log_dir
+    _log_file = log_file
+    _perf_log_dir = perf_log_dir
+
+
+async def _sleep(delay: float) -> None:
+    """Await the configured asyncio.sleep; set via set_asyncio_sleep in main."""
+    if asyncio_sleep is None:
+        return
+    await asyncio_sleep(delay)
+
+
+async def fetch_vessel_name(state, rest_url: str):
     try:
         import urllib.request
-        resp = urllib.request.urlopen("http://localhost:3000/signalk/v1/api/vessels/self", timeout=5)
+
+        resp = urllib.request.urlopen(f"{rest_url}/vessels/self", timeout=5)
         data = json.loads(resp.read())
         name = data.get("name")
         if name:
             state.vessel_name = name
     except Exception:
-        pass
+        _log.debug("fetch_vessel_name: failed", exc_info=True)
 
 
-async def fetch_device_names(state):
+async def fetch_device_names(state, rest_url: str):
     try:
         import urllib.request
-        resp = urllib.request.urlopen("http://localhost:3000/signalk/v1/api/sources", timeout=5)
+
+        resp = urllib.request.urlopen(f"{rest_url}/sources", timeout=5)
         data = json.loads(resp.read())
-        ngt1 = data.get("NGT1", {})
-        for src_id, src_data in ngt1.items():
-            if not src_id.isdigit():
+        for source_key, source_data in data.items():
+            if not isinstance(source_data, dict):
                 continue
-            n2k = src_data.get("n2k", {})
-            model_id = n2k.get("modelId", "")
-            model_ver = n2k.get("modelVersion", "")
-            mfr = n2k.get("manufacturerCode", "")
-            label = model_id
-            if model_ver:
-                label = f"{model_id} ({model_ver})"
-            if mfr and mfr != model_id:
-                label = f"{mfr} {model_id}"
-            full_src = f"NGT1.{src_id}"
-            state.device_names[full_src] = label
+            for src_id, src_data in source_data.items():
+                if not src_id.isdigit():
+                    continue
+                n2k = src_data.get("n2k", {})
+                model_id = n2k.get("modelId", "")
+                model_ver = n2k.get("modelVersion", "")
+                mfr = n2k.get("manufacturerCode", "")
+                label = model_id
+                if model_ver:
+                    label = f"{model_id} ({model_ver})"
+                if mfr and mfr != model_id:
+                    label = f"{mfr} {model_id}"
+                full_src = f"{source_key}.{src_id}"
+                state.device_names[full_src] = label
     except Exception:
-        pass
+        _log.debug("fetch_device_names: failed", exc_info=True)
 
 
-async def fetch_multi_values(state):
+async def fetch_multi_values(state, rest_url: str):
     while True:
         try:
             import urllib.request
-            resp = urllib.request.urlopen("http://localhost:3000/signalk/v1/api/vessels/self", timeout=5)
+
+            resp = urllib.request.urlopen(f"{rest_url}/vessels/self", timeout=5)
             data = json.loads(resp.read())
             nav = data.get("navigation", {})
-            for key in ["magneticVariation", "headingMagnetic", "courseOverGroundTrue", "headingTrue",
-                         "speedOverGround", "speedThroughWater", "rateOfTurn", "attitude"]:
+            for key in [
+                "magneticVariation",
+                "headingMagnetic",
+                "courseOverGroundTrue",
+                "headingTrue",
+                "speedOverGround",
+                "speedThroughWater",
+                "rateOfTurn",
+                "attitude",
+            ]:
                 val = nav.get(key, {})
                 if isinstance(val, dict) and "values" in val:
                     state.multi_values[key] = {}
                     for src, sv in val["values"].items():
                         sv_val = sv.get("value")
-                        if isinstance(sv_val, dict):
-                            state.multi_values[key][src] = sv_val
-                        elif sv_val is not None:
+                        if isinstance(sv_val, dict) or sv_val is not None:
                             state.multi_values[key][src] = sv_val
         except Exception:
-            pass
-        await asyncio_sleep(5)
+            _log.debug("fetch_multi_values: failed", exc_info=True)
+        await _sleep(5)
 
 
 async def logger(state):
     while True:
-        await asyncio_sleep(LOG_INTERVAL)
+        await _sleep(LOG_INTERVAL)
         now = datetime.now(timezone.utc)
         ht_val = derive_true_heading(state)
         entry = {
             "ts": now.isoformat(),
             "vessel": state.vessel_name or None,
         }
-        for key in ["headingMagnetic", "cogTrue", "apTargetMagnetic", "magneticVariation", "rateOfTurn"]:
+        for key in [
+            "headingMagnetic",
+            "cogTrue",
+            "apTargetMagnetic",
+            "magneticVariation",
+            "rateOfTurn",
+        ]:
             v = state.values.get(key)
             if v is not None:
                 if key == "magneticVariation":
@@ -144,35 +193,38 @@ async def logger(state):
                     deg = rad_to_deg_signed(v) * 1.0
                 else:
                     deg = rad_to_deg(v)
-                entry[key] = {"value": round(v, 6), "deg": round(deg, 1), "source": state.sources.get(key, "")}
+                entry[key] = {
+                    "value": round(v, 6),
+                    "deg": round(deg, 1),
+                    "source": state.sources.get(key, ""),
+                }
             else:
                 entry[key] = None
         if ht_val is not None:
-            entry["headingTrue"] = {"value": round(ht_val, 6), "deg": round(rad_to_deg(ht_val), 1), "source": "derived"}
+            entry["headingTrue"] = {
+                "value": round(ht_val, 6),
+                "deg": round(rad_to_deg(ht_val), 1),
+                "source": "derived",
+            }
         else:
             entry["headingTrue"] = None
-        if state.emulation_active and state.fusion_heading is not None:
-            entry["fusionTrue"] = {"value": round(state.fusion_heading, 6), "deg": round(rad_to_deg(state.fusion_heading), 1), "source": "PolarPrism"}
-        else:
-            entry["fusionTrue"] = None
         pos = state.position
         if pos["lat"] is not None or pos["lon"] is not None:
             entry["position"] = {"lat": pos["lat"], "lon": pos["lon"]}
         try:
-            async with aiofiles.open(LOG_FILE, mode="a") as f:
+            async with aiofiles.open(_log_file, mode="a") as f:
                 await f.write(json.dumps(entry, separators=(",", ":")) + "\n")
         except OSError:
-            pass
+            _log.debug("heading log write failed: %s", _log_file)
         state.last_log_time = now.timestamp()
 
 
 async def performance_logger(state):
-    PERF_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sailing_logs")
-    os.makedirs(PERF_LOG_DIR, exist_ok=True)
+    os.makedirs(_perf_log_dir, exist_ok=True)
     PERF_LOG_INTERVAL = 1.0
 
     while True:
-        await asyncio_sleep(PERF_LOG_INTERVAL)
+        await _sleep(PERF_LOG_INTERVAL)
 
         if not state.sailing_log_active or state.sailing_state != "sailing":
             continue
@@ -184,17 +236,13 @@ async def performance_logger(state):
         stw_ms = state.values.get("speedThroughWater")
         sog_ms = state.values.get("speedOverGround")
         cog_rad = state.values.get("cogTrue")
-        hm_rad = state.values.get("headingMagnetic")
-        mv_rad = state.values.get("magneticVariation")
-        rot_rad = state.values.get("rateOfTurn")
-
         twa_rad, tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
         twa_deg = math.degrees(twa_rad) if twa_rad is not None else None
-        tws_kts = tws_ms * 1.94384 if tws_ms is not None else None
+        tws_kts = tws_ms * MS_TO_KNOTS if tws_ms is not None else None
         awa_deg = math.degrees(awa_rad) if awa_rad is not None else None
-        aws_kts = aws_ms * 1.94384 if aws_ms is not None else None
-        stw_kts = stw_ms * 1.94384 if stw_ms is not None else None
-        sog_kts = sog_ms * 1.94384 if sog_ms is not None else None
+        aws_kts = aws_ms * MS_TO_KNOTS if aws_ms is not None else None
+        stw_kts = stw_ms * MS_TO_KNOTS if stw_ms is not None else None
+        sog_kts = sog_ms * MS_TO_KNOTS if sog_ms is not None else None
 
         ht_deg = rad_to_deg(ht_val) if ht_val is not None else None
         cog_deg = rad_to_deg(cog_rad) if cog_rad is not None else None
@@ -232,13 +280,13 @@ async def performance_logger(state):
 
         if state.performance_log_file is None:
             fname = now.strftime("sailing_%Y%m%d_%H%M%S.jsonl")
-            state.performance_log_file = os.path.join(PERF_LOG_DIR, fname)
+            state.performance_log_file = os.path.join(_perf_log_dir, fname)
 
         try:
             async with aiofiles.open(state.performance_log_file, mode="a") as f:
                 await f.write(json.dumps(entry, separators=(",", ":")) + "\n")
         except OSError:
-            pass
+            _log.debug("sailing log write failed: %s", state.performance_log_file)
 
         state.log_sample_count += 1
         if polar_perf is not None:
@@ -257,35 +305,45 @@ async def write_log_event(state, event_type, data=None):
             async with aiofiles.open(state.performance_log_file, mode="a") as f:
                 await f.write(json.dumps(entry, separators=(",", ":")) + "\n")
         except OSError:
-            pass
+            _log.debug("sailing log event write failed: %s", state.performance_log_file)
 
 
-async def ws_writer(state):
+PERF_SAMPLE_INTERVAL = 10.0
+
+
+async def perf_sampler(state):
     while True:
-        if not state.emulation_active:
-            await asyncio_sleep(0.5)
+        await _sleep(PERF_SAMPLE_INTERVAL)
+        awa_rad = state.values.get("windAngleApparent")
+        aws_ms = state.values.get("windSpeedApparent")
+        stw_ms = state.values.get("speedThroughWater")
+        twa_rad, tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
+        if twa_rad is None or tws_ms is None or stw_ms is None:
             continue
-        try:
-            if state.fusion_ws is None:
-                state.fusion_ws = await websockets.connect(SK_WS_URL)
-            fused = compute_fusion_heading(state)
-            if fused is not None:
-                state.fusion_heading = fused
-                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                delta = {
-                    "context": "vessels.self",
-                    "updates": [{
-                        "source": {"label": "PolarPrism", "type": "fusion"},
-                        "timestamp": now,
-                        "values": [
-                            {"path": "navigation.headingTrue", "value": round(fused, 5)}
-                        ]
-                    }]
-                }
-                try:
-                    await state.fusion_ws.send(json.dumps(delta))
-                except websockets.ConnectionClosed:
-                    state.fusion_ws = None
-        except (ConnectionRefusedError, OSError):
-            state.fusion_ws = None
-        await asyncio_sleep(1.0)
+        if state.polar_active not in state.polar_data:
+            continue
+        polar = state.polar_data[state.polar_active]
+        twa_deg = abs(math.degrees(twa_rad))
+        tws_kts = tws_ms * MS_TO_KNOTS
+        stw_kts = stw_ms * MS_TO_KNOTS
+        target = lookup_speed(polar, twa_deg, tws_kts)
+        if target is None or target <= 0:
+            continue
+        pct = stw_kts / target * 100.0
+        now = datetime.now(timezone.utc).timestamp()
+        state.perf_samples.append((now, pct))
+        cutoff = now - max(state.PERF_WINDOWS) - 60
+        state.perf_samples = [(t, p) for t, p in state.perf_samples if t > cutoff]
+        state.perf_averages = {}
+        for window in state.PERF_WINDOWS:
+            window_samples = [p for t, p in state.perf_samples if t > now - window]
+            if window_samples:
+                state.perf_averages[window] = sum(window_samples) / len(window_samples)
+            else:
+                state.perf_averages[window] = None
+        # Periodically re-select the closest polar TWS band to the current
+        # wind speed. Done here (every PERF_SAMPLE_INTERVAL) rather than in
+        # the render path so drawing stays free of state mutation.
+        idx = auto_select_tws_index(polar, tws_kts)
+        if idx is not None:
+            state.polar_tws_index = idx

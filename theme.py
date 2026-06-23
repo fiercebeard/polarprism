@@ -27,8 +27,6 @@ SECTION = (100, 120, 150)
 
 CONNECTED = (0, 200, 80)
 DISCONNECTED = (200, 50, 50)
-FUSION_ON = (0, 200, 255)
-FUSION_OFF = (80, 80, 80)
 
 WATER = (8, 14, 28)
 GRID = (30, 40, 55)
@@ -54,7 +52,7 @@ SIGNAL_COLORS = {
     "apTargetMagnetic": (255, 255, 0),
     "magneticVariation": (80, 110, 255),
     "rateOfTurn": (190, 120, 255),
-    "fusionTrue": (0, 200, 255),
+    "courseBearingTrue": (220, 80, 255),
 }
 
 SIGNAL_LABELS = {
@@ -64,13 +62,67 @@ SIGNAL_LABELS = {
     "apTargetMagnetic": "AP TARGET",
     "magneticVariation": "MAG VAR",
     "rateOfTurn": "ROT",
-    "fusionTrue": "FUSION",
+    "courseBearingTrue": "WP BRG",
 }
+
+DIAG_SIGNAL_CONFIG = {
+    "headingMagnetic": ("Mag Heading:", "deg6"),
+    "rateOfTurn": ("Rate of Turn:", "rot"),
+    "yaw": ("  Yaw:", "deg6_opt"),
+    "roll": ("  Roll:", "deg_signed1_opt"),
+    "pitch": ("  Pitch:", "deg_signed2_opt"),
+    "apTargetMagnetic": ("AP Target:", "deg6"),
+    "magneticVariation": ("Mag Variation:", "deg_signed2"),
+    "cogTrue": ("COG True:", "deg6"),
+    "speedOverGround": ("SOG:", "speed_kts"),
+    "speedThroughWater": ("STW:", "speed_kts"),
+    "rudderAngle": ("Rudder:", "deg_signed1"),
+    "windAngleApparent": ("App Wind:", "wind_combined"),
+    "windSpeedApparent": ("Wind Speed:", "speed_kts"),
+    "headingTrue": ("True Heading:", "deg6"),
+    "courseBearingTrue": ("WP Bearing:", "deg6"),
+    "nextPointBearingTrue": ("Next WP Brg:", "deg6"),
+    "nextPointDistance": ("Next WP Dist:", "speed_kts"),
+    "previousPointBearingTrue": ("Prev WP Brg:", "deg6"),
+    "courseRhumblineBearingTrue": ("RL Brg:", "deg6"),
+    "calcBearingTrue": ("Calc Brg:", "deg6"),
+    "calcBearingMagnetic": ("Calc Brg M:", "deg6"),
+    "calcVMG": ("VMG:", "speed_kts"),
+    "calcXTE": ("XTE:", "speed_kts"),
+    "calcDistance": ("Dist:", "speed_kts"),
+    "gcNextPointBearingTrue": ("GC Next Brg:", "deg6"),
+    "gcNextPointDistance": ("GC Next Dist:", "speed_kts"),
+    "gcNextPointVMG": ("GC VMG:", "speed_kts"),
+    "gcXTE": ("GC XTE:", "speed_kts"),
+    "gcBearingTrackTrue": ("GC Track Brg:", "deg6"),
+}
+
+
+def build_device_sections(state) -> list[dict]:
+    source_to_signals: dict[str, list[str]] = {}
+    for signal_key, src in state.sources.items():
+        if src:
+            source_to_signals.setdefault(src, []).append(signal_key)
+
+    sections = []
+    for src, signals in sorted(source_to_signals.items()):
+        dev_name = state.device_names.get(src, src)
+        rows = []
+        for sig in sorted(signals, key=lambda s: DIAG_SIGNAL_CONFIG.get(s, ("", ""))[0]):
+            config = DIAG_SIGNAL_CONFIG.get(sig)
+            if config:
+                label, fmt_type = config
+                rows.append((label, sig, fmt_type))
+        if rows:
+            sections.append({"title": dev_name, "rows": rows})
+    return sections
+
 
 NAV_ITEMS = [
     ("navigation", "\u2693"),
     ("heading", "\u2197"),
-    ("sailing", "\u26F5"),
+    ("sailing", "\u26f5"),
+    ("diagnostics", "\U0001f4ca"),
     ("settings", "\u2699"),
 ]
 
@@ -78,14 +130,16 @@ NAV_ITEM_LABELS = {
     "navigation": "Navigation",
     "heading": "Heading",
     "sailing": "Sailing",
+    "diagnostics": "Diagnostics",
     "settings": "Settings",
 }
 
 NAV_TABS = {
     "navigation": ["Chart"],
-    "heading": ["Compass", "Diagnostics", "Fusion"],
-    "sailing": ["Polars", "Wind", "Log"],
-    "settings": ["SignalK", "Display"],
+    "heading": ["Compass", "Headings"],
+    "sailing": ["Polars", "Wind", "Log", "Route"],
+    "diagnostics": ["Values", "NMEA Log"],
+    "settings": ["SignalK", "Display", "Setup"],
 }
 
 NAV_WIDTH_RATIO = 0.20
@@ -128,13 +182,24 @@ SAILING_INACTIVE = (80, 80, 80)
 MOTORING_COLOR = (200, 120, 40)
 IDLE_COLOR = (100, 100, 120)
 
-SAIL_COLORS = {
-    "Jib": (100, 180, 255),
-    "Code0": (160, 230, 80),
-    "Asym": (255, 110, 60),
-}
+WP_LINE = (220, 80, 255)
+WP_VMC_DOT = (0, 255, 200)
+WP_VMG_DOT = (100, 220, 180)
+WP_ACTION = (255, 60, 180)
+WP_HOLD = (80, 220, 80)
+WP_ADJUST = (100, 220, 180)
+
+ROUTE_LINE = (140, 90, 220)
+ROUTE_ACTIVE_LEG = (255, 200, 60)
+ROUTE_WAYPOINT = (180, 160, 240)
+ROUTE_NEXT_WAYPOINT = (255, 230, 120)
+ROUTE_DONE = (80, 220, 80)
+ROUTE_LEG_DONE = (70, 80, 100)
 
 BTN_BG = (30, 40, 55)
 BTN_BORDER = (60, 80, 110)
 BTN_ACTIVE_BG = (40, 60, 90)
 BTN_ACTIVE_BORDER = (251, 191, 36)
+
+SETUP_ROW_H = 36
+SETUP_EXPAND_CHEVRON = (100, 120, 150)

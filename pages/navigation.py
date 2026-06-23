@@ -1,6 +1,4 @@
-import pygame
-from chart.renderer import draw_chart, handle_chart_click, handle_chart_scroll, handle_chart_drag
-from signalk.models import State
+from chart.renderer import draw_chart, handle_chart_click, handle_chart_drag, handle_chart_scroll
 
 
 def render(surface, font, font_sm, state, rect):

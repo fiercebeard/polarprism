@@ -1,28 +1,201 @@
 #!/usr/bin/env python3
+import argparse
 import asyncio
+import contextlib
+import logging
 import os
 import sys
 import traceback
 
 import pygame
 
-from theme import BG, NAV_WIDTH_RATIO
-from signalk.models import State
-from signalk.client import (
-    ws_reader, fetch_vessel_name, fetch_device_names,
-    fetch_multi_values, logger, ws_writer, log_error, set_asyncio_sleep,
-    performance_logger, write_log_event,
-)
-from polars.parser import discover_polars, load_saildef, load_sailselect
 import nav
 import tabs
-from pages import navigation, heading, sailing, settings
+from config import (
+    SAIL_COLOR_PALETTE,
+    Config,
+    load_config,
+    load_state,
+    save_state,
+    ws_url_to_rest_url,
+)
+from logging_config import setup_logging
+from pages import diagnostics, heading, navigation, sailing, settings
+from polars.parser import (
+    build_sail_groups,
+    build_sail_to_polar,
+    compute_polar_display_names,
+    discover_polars,
+    discover_saildef,
+    discover_sailselect,
+)
+from routes.parser import discover_routes
+from signalk.client import (
+    fetch_device_names,
+    fetch_multi_values,
+    fetch_vessel_name,
+    logger,
+    perf_sampler,
+    performance_logger,
+    set_asyncio_sleep,
+    set_log_paths,
+    write_log_event,
+    ws_reader,
+)
+from signalk.models import State, _refresh_route_cache
+from theme import BG, NAV_WIDTH_RATIO
 
-FPS = 30
-POLARS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polars")
+_logger = logging.getLogger("polarprism")
+
+
+def _init_state(polars_dir: str, routes_dir: str, config: Config) -> State:
+    state = State()
+
+    polars = discover_polars(polars_dir)
+    for p in polars:
+        state.polar_data[p.name] = p
+        state.polar_names.append(p.name)
+    if state.polar_names:
+        state.polar_active = state.polar_names[0]
+
+    saildef = discover_saildef(polars_dir, state.polar_names or None)
+    state.saildef = saildef
+
+    sailselect = discover_sailselect(polars_dir, state.polar_names or None)
+    state.sailselect = sailselect
+
+    sail_to_polar = (
+        config.sail_to_polar
+        if config.sail_to_polar
+        else build_sail_to_polar(saildef, state.polar_names)
+    )
+    state.sail_to_polar = sail_to_polar
+
+    sail_groups = build_sail_groups(
+        saildef,
+        config_groups=config.sail_groups if config.sail_groups else None,
+    )
+    state.sail_groups = sail_groups
+
+    sail_colors = dict(config.sail_colors) if config.sail_colors else {}
+    all_sail_names = sorted(saildef.values()) if saildef else []
+    for i, sail_name in enumerate(all_sail_names):
+        if sail_name not in sail_colors:
+            sail_colors[sail_name] = SAIL_COLOR_PALETTE[i % len(SAIL_COLOR_PALETTE)]
+    state.sail_colors = sail_colors
+
+    state.available_sails = all_sail_names
+
+    state.polar_display_names = compute_polar_display_names(
+        state.polar_names, sail_to_polar, saildef
+    )
+
+    routes = discover_routes(routes_dir)
+    for r in routes:
+        state.routes[r.name] = r
+        state.route_names.append(r.name)
+    if state.route_names:
+        state.route_active = state.route_names[0]
+        state.route_leg_index = 0
+        _refresh_route_cache(state)
+
+    state.chart_center_lat = config.chart_lat
+    state.chart_center_lon = config.chart_lon
+    state.chart_zoom = config.chart_zoom
+
+    return state
+
+
+def _spawn_tasks(state: State, config: Config) -> list:
+    return [
+        asyncio.ensure_future(fetch_vessel_name(state, config.signalk_rest_url)),
+        asyncio.ensure_future(fetch_device_names(state, config.signalk_rest_url)),
+        asyncio.ensure_future(fetch_multi_values(state, config.signalk_rest_url)),
+        asyncio.ensure_future(ws_reader(state, config.signalk_url)),
+        asyncio.ensure_future(logger(state)),
+        asyncio.ensure_future(performance_logger(state)),
+        asyncio.ensure_future(perf_sampler(state)),
+    ]
+
+
+def _auto_convert_raw(config: Config) -> None:
+    """Import any new raw Signal K logs in config.raw_dir on startup."""
+    from signalk.rawlog import auto_convert_raw_dir
+
+    produced = auto_convert_raw_dir(
+        config.raw_dir, config.log_dir, config.local_tz_offset, polars_dir=config.polars_dir
+    )
+    if produced:
+        _logger.info("auto-converted %d raw log(s) into %s", len(produced), config.log_dir)
+
+
+def _render_frame(
+    screen: pygame.Surface,
+    state: State,
+    font: pygame.font.Font,
+    font_sm: pygame.font.Font,
+    win_w: int,
+    win_h: int,
+    config: Config,
+) -> None:
+    nav_w = max(int(win_w * NAV_WIDTH_RATIO), 160)
+    content_x = nav_w
+    content_w = win_w - nav_w
+
+    try:
+        nav.draw_nav(screen, font, font_sm, state, win_h, nav_w)
+    except Exception as e:
+        _logger.error("nav: %s", e, exc_info=True)
+
+    pygame.draw.line(screen, (40, 50, 70), (nav_w, 0), (nav_w, win_h), 1)
+
+    try:
+        tabs.draw_tabs(screen, font, font_sm, state, content_x, content_w)
+    except Exception as e:
+        _logger.error("tabs: %s", e, exc_info=True)
+
+    content_rect = nav.get_content_rect(win_w, win_h)
+
+    try:
+        if state.active_nav == "navigation":
+            navigation.render(screen, font, font_sm, state, content_rect)
+        elif state.active_nav == "heading":
+            heading.render(screen, font, font_sm, state, content_rect, state.active_tab)
+        elif state.active_nav == "sailing":
+            sailing.render(screen, font, font_sm, state, content_rect, state.active_tab)
+        elif state.active_nav == "diagnostics":
+            diagnostics.render(screen, font, font_sm, state, content_rect, state.active_tab)
+        elif state.active_nav == "settings":
+            settings.render(
+                screen, font, font_sm, state, content_rect, state.active_tab, config=config
+            )
+    except Exception as e:
+        _logger.error("page render: %s", e, exc_info=True)
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="PolarPrism - Sailing Navigation Instrument")
+    parser.add_argument(
+        "--config", dest="config_path", default=None, help="Path to polarprism.toml"
+    )
+    parser.add_argument("--signalk-url", default=None, help="Signal K WebSocket URL")
+    parser.add_argument("--polars-dir", default=None, help="Path to polars directory")
+    parser.add_argument("--routes-dir", default=None, help="Path to routes directory")
+    args = parser.parse_args()
+
+    config = load_config(args.config_path)
+    if args.signalk_url:
+        config.signalk_url = args.signalk_url
+        config.signalk_rest_url = ws_url_to_rest_url(args.signalk_url)
+    if args.polars_dir:
+        config.polars_dir = args.polars_dir
+    if args.routes_dir:
+        config.routes_dir = args.routes_dir
+
+    # Standardized error logging — stderr + rotating file. Set up before
+    # anything that might log (pygame init, tile config, raw conversion).
+    setup_logging(error_log_dir=config.error_log_dir)
+
     pygame.init()
     info = pygame.display.Info()
     win_w = info.current_w
@@ -41,31 +214,20 @@ async def main():
     except Exception:
         font_sm = pygame.font.Font(None, 16)
 
-    state = State()
+    from chart.tiles import configure_tiles
 
-    polars = discover_polars(POLARS_DIR)
-    for p in polars:
-        state.polar_data[p.name] = p
-        state.polar_names.append(p.name)
-    if state.polar_names:
-        state.polar_active = state.polar_names[0]
+    configure_tiles(config.tiles_dir, config.tile_online, config.tile_url)
 
-    saildef_path = os.path.join(POLARS_DIR, "US50_Rated_BestPerf.saildef")
-    state.saildef = load_saildef(saildef_path)
-    state.saildef.setdefault(3, "Code0")
+    log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heading_log.jsonl")
+    set_log_paths(log_file, config.log_dir)
 
-    sailselect_path = os.path.join(POLARS_DIR, "US50_Rated_BestPerf.sailselect")
-    state.sailselect = load_sailselect(sailselect_path)
+    if config.auto_convert_raw:
+        _auto_convert_raw(config)
 
+    state = _init_state(config.polars_dir, config.routes_dir, config)
+    load_state(state, config)
     set_asyncio_sleep(asyncio.sleep)
-
-    asyncio.ensure_future(fetch_vessel_name(state))
-    asyncio.ensure_future(fetch_device_names(state))
-    asyncio.ensure_future(fetch_multi_values(state))
-    asyncio.ensure_future(ws_reader(state))
-    asyncio.ensure_future(logger(state))
-    asyncio.ensure_future(ws_writer(state))
-    asyncio.ensure_future(performance_logger(state))
+    _tasks = _spawn_tasks(state, config)
 
     running = True
     dragging_chart = False
@@ -80,6 +242,17 @@ async def main():
                 screen = pygame.display.set_mode((win_w, win_h), pygame.RESIZABLE)
 
             elif event.type == pygame.KEYDOWN:
+                # If the Settings URL editor is active, it consumes all keys
+                # (including Esc, which cancels the edit instead of quitting).
+                url_input = getattr(state, "_sk_url_input", None)
+                if url_input is not None and url_input.active and state.active_nav == "settings":
+                    result = settings.handle_key(state, event, state.active_tab, config=config)
+                    if result == "sk_reconnect":
+                        for t in _tasks:
+                            t.cancel()
+                        _tasks = _spawn_tasks(state, config)
+                    continue
+
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif state.active_nav == "navigation":
@@ -97,10 +270,12 @@ async def main():
                             state.chart_zoom -= 1
                 if state.active_nav == "heading":
                     heading.handle_key(state, event.key, state.active_tab)
+                if state.active_nav == "diagnostics":
+                    diagnostics.handle_key(state, event.key, state.active_tab)
                 if state.active_nav == "sailing":
                     result = sailing.handle_key(state, event.key, state.active_tab)
-                    if result and result.startswith("log_"):
-                        asyncio.ensure_future(_handle_log_event(state, result))
+                    if result and result.startswith(("log_", "sail_")):
+                        _tasks.append(asyncio.ensure_future(_handle_log_event(state, result)))
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -130,8 +305,16 @@ async def main():
                             state.drag_start = (mx, my)
                     elif state.active_nav == "sailing":
                         result = sailing.handle_click(state, mx, my, content_rect, state.active_tab)
-                        if result and result.startswith("log_"):
-                            asyncio.ensure_future(_handle_log_event(state, result))
+                        if result and result.startswith(("log_", "sail_")):
+                            _tasks.append(asyncio.ensure_future(_handle_log_event(state, result)))
+                    elif state.active_nav == "settings":
+                        result = settings.handle_click(
+                            state, mx, my, content_rect, state.active_tab, config=config
+                        )
+                        if result == "sk_reconnect":
+                            for t in _tasks:
+                                t.cancel()
+                            _tasks = _spawn_tasks(state, config)
 
                 if event.button in (4, 5) and mx >= content_x and state.active_nav == "navigation":
                     content_rect = nav.get_content_rect(win_w, win_h)
@@ -143,74 +326,64 @@ async def main():
                     dragging_chart = False
                     state.dragging = False
 
-            elif event.type == pygame.MOUSEMOTION:
-                if dragging_chart and state.drag_start:
-                    mx, my = event.pos
-                    sx, sy = state.drag_start
-                    dx = mx - sx
-                    dy = my - sy
-                    content_rect = nav.get_content_rect(win_w, win_h)
-                    navigation.handle_drag(state, dx, dy, content_rect)
-                    state.drag_start = (mx, my)
+            elif (
+                event.type == pygame.MOUSEMOTION and dragging_chart and state.drag_start is not None
+            ):
+                mx, my = event.pos
+                sx, sy = state.drag_start
+                dx = mx - sx
+                dy = my - sy
+                content_rect = nav.get_content_rect(win_w, win_h)
+                navigation.handle_drag(state, dx, dy, content_rect)
+                state.drag_start = (mx, my)
 
         screen.fill(BG)
-
-        nav_w = max(int(win_w * NAV_WIDTH_RATIO), 160)
-        content_x = nav_w
-        content_w = win_w - nav_w
-
-        try:
-            nav.draw_nav(screen, font, font_sm, state, win_h, nav_w)
-        except Exception as e:
-            log_error(f"nav: {e}")
-
-        pygame.draw.line(screen, (40, 50, 70), (nav_w, 0), (nav_w, win_h), 1)
-
-        try:
-            tabs.draw_tabs(screen, font, font_sm, state, content_x, content_w)
-        except Exception as e:
-            log_error(f"tabs: {e}")
-
-        content_rect = nav.get_content_rect(win_w, win_h)
-
-        try:
-            if state.active_nav == "navigation":
-                navigation.render(screen, font, font_sm, state, content_rect)
-            elif state.active_nav == "heading":
-                heading.render(screen, font, font_sm, state, content_rect, state.active_tab)
-            elif state.active_nav == "sailing":
-                sailing.render(screen, font, font_sm, state, content_rect, state.active_tab)
-            elif state.active_nav == "settings":
-                settings.render(screen, font, font_sm, state, content_rect, state.active_tab)
-        except Exception as e:
-            log_error(f"page render: {e}")
-
+        _render_frame(screen, state, font, font_sm, win_w, win_h, config)
         pygame.display.flip()
-        clock.tick(FPS)
+        dt_ms = clock.tick(config.fps)
+        state._frame_dt_ms = dt_ms
         await asyncio.sleep(0)
 
+    save_state(state, config)
     pygame.quit()
 
 
 async def _handle_log_event(state, result):
     if result == "log_start":
-        await write_log_event(state, "log_start", {
-            "polar": state.polar_active,
-            "active_sails": list(state.active_sails),
-            "sailing_state": state.sailing_state,
-        })
+        await write_log_event(
+            state,
+            "log_start",
+            {
+                "polar": state.polar_active,
+                "active_sails": list(state.active_sails),
+                "sailing_state": state.sailing_state,
+            },
+        )
     elif result == "log_stop":
-        await write_log_event(state, "log_stop", {
-            "samples": state.log_sample_count,
-        })
+        await write_log_event(
+            state,
+            "log_stop",
+            {
+                "samples": state.log_sample_count,
+            },
+        )
     elif result == "state_change":
-        await write_log_event(state, "sailing_state_change", {
-            "to": state.sailing_state,
-        })
+        await write_log_event(
+            state,
+            "sailing_state_change",
+            {
+                "to": state.sailing_state,
+            },
+        )
     elif result == "sail_toggle":
-        await write_log_event(state, "sail_change", {
-            "active_sails": list(state.active_sails),
-        })
+        await write_log_event(
+            state,
+            "sail_change",
+            {
+                "active_sails": list(state.active_sails),
+                "polar": state.polar_active,
+            },
+        )
 
 
 if __name__ == "__main__":
@@ -221,9 +394,12 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as e:
         tb = traceback.format_exc()
-        log_error(f"FATAL: {e}\n{tb}")
-        try:
+        _logger.error("FATAL: %s\n%s", e, tb)
+        with contextlib.suppress(Exception):
             pygame.quit()
-        except Exception:
-            pass
         sys.exit(1)
+
+
+def cli() -> None:
+    """Synchronous console-script entry point (see pyproject [project.scripts])."""
+    asyncio.run(main())
