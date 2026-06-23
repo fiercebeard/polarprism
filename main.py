@@ -20,7 +20,7 @@ from config import (
     ws_url_to_rest_url,
 )
 from logging_config import setup_logging
-from pages import diagnostics, heading, navigation, sailing, settings
+from pages import diagnostics, heading, navigation, replay as replay_page, sailing, settings
 from polars.parser import (
     build_sail_groups,
     build_sail_to_polar,
@@ -43,7 +43,8 @@ from signalk.client import (
     ws_reader,
 )
 from signalk.models import State, _refresh_route_cache
-from theme import BG, NAV_WIDTH_RATIO
+from replay.engine import ReplaySession
+from theme import BG, NAV_WIDTH_RATIO, REPLAY_BAR_BG, REPLAY_COLOR, REPLAY_PROGRESS, TEXT_VALUE
 
 _logger = logging.getLogger("polarprism")
 
@@ -129,6 +130,72 @@ def _auto_convert_raw(config: Config) -> None:
         _logger.info("auto-converted %d raw log(s) into %s", len(produced), config.log_dir)
 
 
+def _discover_log_files(log_dir: str) -> list[str]:
+    """Find all .jsonl sailing log files in log_dir, sorted newest first."""
+    if not os.path.isdir(log_dir):
+        return []
+    files = [f for f in os.listdir(log_dir) if f.startswith("sailing_") and f.endswith(".jsonl")]
+    return sorted(files, reverse=True)
+
+
+def _start_replay(state: State, log_path: str) -> None:
+    """Helper called from replay hub click handler."""
+    session = ReplaySession(log_path, polar_names_map=state.polar_data)
+    state.replay_active = True
+    state.replay_log_path = log_path
+    state._replay_session = session
+    state._replay_speed_index = 2
+    state.connected = False
+    state.polar_active = session.polar_name if session.polar_name else state.polar_active
+
+
+def _stop_replay(state: State) -> None:
+    """Exit replay mode and clean up session."""
+    state.replay_active = False
+    state.replay_log_path = ""
+    state._replay_session = None
+    state.connected = False
+
+
+def _render_replay_bar(
+    screen: pygame.Surface,
+    font: pygame.font.Font,
+    session: ReplaySession | None,
+    win_w: int,
+    win_h: int,
+) -> None:
+    """Draw the replay controls bar at the bottom of the screen."""
+    if session is None:
+        return
+
+    bar_h = 32
+    bar_y = win_h - bar_h
+    pygame.draw.rect(screen, REPLAY_BAR_BG, (0, bar_y, win_w, bar_h))
+
+    # Status
+    status = "PAUSED" if session.is_paused else "PLAYING"
+    status_color = (200, 200, 200) if session.is_paused else REPLAY_COLOR
+    st = font.render(f"REPLAY  {status}", True, status_color)
+    surface_x = max(st.get_width() + 20, 20)
+    screen.blit(st, (surface_x, bar_y + bar_h // 2 - st.get_height() // 2))
+
+    # Current time
+    cur = font.render(session.wall_current, True, REPLAY_PROGRESS)
+    screen.blit(cur, (surface_x + st.get_width() + 30, bar_y + bar_h // 2 - cur.get_height() // 2))
+
+    # Speed label
+    sp = font.render(session.speed_label, True, TEXT_VALUE)
+    screen.blit(sp, (surface_x + st.get_width() + cur.get_width() + 30, bar_y + bar_h // 2 - sp.get_height() // 2))
+
+    # Progress bar
+    progress_w = win_w - 40
+    progress_rect = pygame.Rect(20, bar_y + bar_h - 10, progress_w, 4)
+    pygame.draw.rect(screen, REPLAY_BAR_BG, progress_rect)
+    fill_w = max(4, int(progress_rect.width * session.progress_ratio))
+    fill_rect = pygame.Rect(progress_rect.x, progress_rect.y, fill_w, progress_rect.height)
+    pygame.draw.rect(screen, REPLAY_PROGRESS, fill_rect)
+
+
 def _render_frame(
     screen: pygame.Surface,
     state: State,
@@ -163,6 +230,8 @@ def _render_frame(
             heading.render(screen, font, font_sm, state, content_rect, state.active_tab)
         elif state.active_nav == "sailing":
             sailing.render(screen, font, font_sm, state, content_rect, state.active_tab)
+        elif state.active_nav == "replay":
+            _render_replay_page(screen, font, font_sm, state, content_rect, config)
         elif state.active_nav == "diagnostics":
             diagnostics.render(screen, font, font_sm, state, content_rect, state.active_tab)
         elif state.active_nav == "settings":
@@ -172,12 +241,29 @@ def _render_frame(
     except Exception as e:
         _logger.error("page render: %s", e, exc_info=True)
 
+    # Overlay replay bar during replay
+    session = getattr(state, "_replay_session", None)
+    if session is not None:
+        _render_replay_bar(screen, font, session, win_w, win_h)
 
-async def main():
+
+def _render_replay_page(
+    screen: pygame.Surface,
+    font: pygame.font.Font,
+    font_sm: pygame.font.Font,
+    state: State,
+    rect: tuple[int, int, int, int],
+    config: Config,
+) -> None:
+    """Render the replay hub page when on the Replay nav tab."""
+    log_files = _discover_log_files(config.log_dir)
+    session = getattr(state, "_replay_session", None)
+    replay_page.draw_replay_page(screen, font, state, rect, config.log_dir)
+
+
+async def main() -> None:
     parser = argparse.ArgumentParser(description="PolarPrism - Sailing Navigation Instrument")
-    parser.add_argument(
-        "--config", dest="config_path", default=None, help="Path to polarprism.toml"
-    )
+    parser.add_argument("--config", dest="config_path", default=None, help="Path to polarprism.toml")
     parser.add_argument("--signalk-url", default=None, help="Signal K WebSocket URL")
     parser.add_argument("--polars-dir", default=None, help="Path to polars directory")
     parser.add_argument("--routes-dir", default=None, help="Path to routes directory")
@@ -192,8 +278,6 @@ async def main():
     if args.routes_dir:
         config.routes_dir = args.routes_dir
 
-    # Standardized error logging — stderr + rotating file. Set up before
-    # anything that might log (pygame init, tile config, raw conversion).
     setup_logging(error_log_dir=config.error_log_dir)
 
     pygame.init()
@@ -227,8 +311,9 @@ async def main():
     state = _init_state(config.polars_dir, config.routes_dir, config)
     load_state(state, config)
     set_asyncio_sleep(asyncio.sleep)
-    _tasks = _spawn_tasks(state, config)
 
+    _tasks: list = _spawn_tasks(state, config)
+    session: ReplaySession | None = None
     running = True
     dragging_chart = False
 
@@ -241,9 +326,14 @@ async def main():
                 win_w, win_h = event.w, event.h
                 screen = pygame.display.set_mode((win_w, win_h), pygame.RESIZABLE)
 
+            elif event.type == pygame.MOUSEWHEEL:
+                # Scrub replay timeline on mouse wheel
+                if session is not None and session.entry_count > 0:
+                    idx = session._sample_idx + int(event.y * 10)
+                    session.seek_to(idx)
+
             elif event.type == pygame.KEYDOWN:
                 # If the Settings URL editor is active, it consumes all keys
-                # (including Esc, which cancels the edit instead of quitting).
                 url_input = getattr(state, "_sk_url_input", None)
                 if url_input is not None and url_input.active and state.active_nav == "settings":
                     result = settings.handle_key(state, event, state.active_tab, config=config)
@@ -254,8 +344,25 @@ async def main():
                     continue
 
                 if event.key == pygame.K_ESCAPE:
+                    if session is not None:
+                        _stop_replay(state)
+                        session = None
+                        continue
                     running = False
-                elif state.active_nav == "navigation":
+
+                # Replay playback controls
+                if session is not None:
+                    if event.key == pygame.K_SPACE:
+                        session.toggle_pause()
+                    elif event.key == pygame.K_greater or event.key == pygame.K_period:
+                        session.speed_up()
+                    elif event.key == pygame.K_less or event.key == pygame.K_comma:
+                        session.speed_down()
+                    elif event.key == pygame.K_r:
+                        session.reset()
+                    continue
+
+                if state.active_nav == "navigation":
                     if event.key == pygame.K_c:
                         lat = state.position.get("lat")
                         lon = state.position.get("lon")
@@ -297,6 +404,20 @@ async def main():
 
                 if event.button == 1 and mx >= content_x:
                     content_rect = nav.get_content_rect(win_w, win_h)
+
+                    # Handle replay page click for file list
+                    if state.active_nav == "replay":
+                        log_files = _discover_log_files(config.log_dir)
+                        session = getattr(state, "_replay_session", None)
+                        event_str = replay_page.handle_replay_page_click(
+                            state, mx, my, content_rect, config.log_dir,
+                             lambda fp: _start_replay(state, fp),
+                        )
+                        if event_str == "stop":
+                            _stop_replay(state)
+                            session = None
+                        continue
+
                     if state.active_nav == "navigation":
                         chart_result = navigation.handle_click(state, mx, my, content_rect)
                         if chart_result == "drag":

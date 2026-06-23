@@ -122,6 +122,7 @@ NAV_ITEMS = [
     ("navigation", "\u2693"),
     ("heading", "\u2197"),
     ("sailing", "\u26f5"),
+    ("replay", "\u23f5"),
     ("diagnostics", "\U0001f4ca"),
     ("settings", "\u2699"),
 ]
@@ -130,6 +131,7 @@ NAV_ITEM_LABELS = {
     "navigation": "Navigation",
     "heading": "Heading",
     "sailing": "Sailing",
+    "replay": "Replay",
     "diagnostics": "Diagnostics",
     "settings": "Settings",
 }
@@ -138,6 +140,7 @@ NAV_TABS = {
     "navigation": ["Chart"],
     "heading": ["Compass", "Headings"],
     "sailing": ["Polars", "Wind", "Log", "Route"],
+    "replay": [],
     "diagnostics": ["Values", "NMEA Log"],
     "settings": ["SignalK", "Display", "Setup"],
 }
@@ -203,3 +206,10 @@ BTN_ACTIVE_BORDER = (251, 191, 36)
 
 SETUP_ROW_H = 36
 SETUP_EXPAND_CHEVRON = (100, 120, 150)
+
+REPLAY_LABEL = "REPLAY"
+REPLAY_COLOR = (200, 180, 50)
+REPLAY_BG = (40, 35, 20)
+REPLAY_BAR_BG = (60, 55, 30)
+REPLAY_BAR_FILL = (180, 160, 40)
+REPLAY_PROGRESS = (255, 200, 60)

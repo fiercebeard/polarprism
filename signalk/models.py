@@ -98,6 +98,12 @@ class State:
         self.PERF_WINDOWS: list[int] = [60, 300, 600, 1800]
         self.nmea_log: deque[str] = deque(maxlen=500)
 
+        # Replay state (mutually exclusive with live)
+        self.replay_active: bool = False
+        self.replay_log_path: str = ""
+        self._replay_speed_index: int = 2
+        self._replay_session: Any | None = None
+
         # Runtime cache for the polar-page recommendation box. Throttles the
         # recomputation of the TACK/HEAD UP/HOLD prose so it stays readable.
         # Not persisted by save_state.
