@@ -53,7 +53,7 @@ Two tabs:
 | Action | Control |
 |---|---|
 | Adjust heading offset | `[` (decrease) / `]` (increase) by 0.5° |
-| Toggle fusion heading | `F` key |
+
 
 ### Sailing (⛵)
 
@@ -63,7 +63,8 @@ Four tabs:
 
 A polar rose diagram showing theoretical boat speed at various wind angles for the selected true wind speed (TWS). The current boat position is plotted on the polar. Recommended sail is displayed based on current conditions.
 
-- Click on the polar diagram to select TWS
+- Click on the polar diagram to select TWS, or press `W`/`S` (or `↑`/`↓`)
+- Click the TWS buttons in the panel to select TWS
 - Press `R` to cycle to the next route
 
 #### Wind
@@ -89,7 +90,7 @@ Displays route waypoints, leg bearings, distances, and computed VMC (velocity ma
 | Action | Control |
 |---|---|
 | Next leg | Click "Next Leg" button or press `N` |
-| Previous leg | Press `P` |
+| Previous leg | Press `P` / `B` |
 | Cycle route | Click route buttons or press `R` |
 
 Routes are loaded from `.gpx` files placed in the `routes/` directory.
@@ -264,7 +265,7 @@ Navigate to **Sailing → Polars**. The polar rose shows theoretical boat speed 
 | Cyan diamonds | Best VMC angle (the TWA that maximizes progress toward the waypoint) |
 | Teal circles | Best VMG angles (upwind and downwind) |
 
-Select different TWS columns by clicking the TWS buttons in the panel or pressing `W`/`S`. Switch between polar profiles by clicking the profile buttons (labeled with sail-derived display names, e.g. `1:Jib`) or pressing `1`/`2`/`3`/`4`. Selecting a sail on the **Sails** section auto-switches to its mapped polar.
+Select different TWS columns by clicking the TWS buttons in the panel, clicking the polar diagram, or pressing `W`/`S` (or `↑`/`↓`). Switch between polar profiles by clicking the profile buttons (labeled with sail-derived display names, e.g. `1:Jib`) or pressing `1`/`2`/`3`/`4`. Selecting a sail **does not** change the active polar — set the polar explicitly with the profile buttons. A warning is shown on the Polars panel when the active polar does not match your active sails.
 
 ### Step 5: Use the Recommendation Box
 
@@ -311,7 +312,7 @@ The **Recommended Sail** section shows the sail name (color-coded) computed from
 
 Switch to the **Log** tab to record performance data:
 
-1. **Select your sails** — Click sail buttons to mark which sails are set. Within each group only one sail can be active at a time; selecting one deselects the others. Selecting a sail also auto-switches the active polar to its mapped polar. Groups come from your `[[sail.groups]]` config, or default to a single `sails` group derived from the `.saildef`.
+1. **Set your polar profile** — Click the Polar Profile buttons (or press `1`–`4`) to select the polar that matches your current sail configuration. Then **select your sails** — Click sail buttons to mark which sails are set. Within each group only one sail can be active at a time; selecting one deselects the others. Groups come from your `[[sail.groups]]` config, or default to a single `sails` group derived from the `.saildef`.
 2. **Set sailing state** — Press `1` for sailing, `2` for motoring, `3` for idle. Performance entries are only written while in the `sailing` state; motoring/idle still log state-change events.
 3. **Start the log** — Click "START LOG" or press `L`. This begins recording 1 Hz entries to `sailing_YYYYMMDD_HHMMSS.jsonl` in `sailing_logs/` (configurable via `[paths] log_dir`). Each entry includes position, headings, SOG/STW, TWA/TWS/TWD, AWA/AWS, sailing state, active sails, polar name, target speed, and performance percentage.
 4. **Stop the log** — Click "STOP LOG" or press `L` again.
@@ -334,7 +335,7 @@ Press `C` to re-center the chart on your GPS position. Use scroll or `+`/`-` to 
 On the **Route** tab, when you round a mark:
 
 - Click **"ADVANCE LEG [N]"** or press `N` to advance to the next waypoint (the button reads **"FINISH"** on the last leg)
-- Click **"PREVIOUS LEG [B]"** or press `B` to go back to the previous leg
+- Click **"PREVIOUS LEG [P/B]"** or press `P`/`B` to go back to the previous leg
 - The Route tab updates leg bearing, distance, VMC, VMC TWA, VMC speed, and ETA for the new leg
 
 ### Putting It All Together: A Typical Race Workflow

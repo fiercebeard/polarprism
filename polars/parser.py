@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import glob as globmod
+import logging
 import math
 import os
 
+logger = logging.getLogger("polarprism")
+
 
 class PolarData:
-    __slots__ = ("name", "speed_grid", "twa_list", "tws_list")
+    __slots__ = ("measured", "name", "speed_grid", "twa_list", "tws_list")
 
     def __init__(
         self,
@@ -14,18 +17,25 @@ class PolarData:
         twa_list: list[float],
         tws_list: list[float],
         speed_grid: dict[float, dict[float, float]],
+        measured: bool = False,
     ) -> None:
         self.name = name
         self.twa_list = twa_list
         self.tws_list = tws_list
         self.speed_grid = speed_grid
+        self.measured = measured
 
 
 def load_polar(filepath: str) -> PolarData | None:
     name = os.path.splitext(os.path.basename(filepath))[0]
-    with open(filepath) as f:
-        lines = [line.strip() for line in f if line.strip()]
+    try:
+        with open(filepath) as f:
+            lines = [line.strip() for line in f if line.strip()]
+    except OSError:
+        logger.warning("Cannot read polar file: %s", filepath)
+        return None
     if not lines:
+        logger.warning("Empty polar file: %s", filepath)
         return None
 
     header = lines[0]
@@ -134,6 +144,26 @@ def discover_polars(directory: str) -> list[PolarData]:
         p = load_polar(csv_path)
         if p is not None:
             polars.append(p)
+    return polars
+
+
+def discover_measured_polars(directory: str) -> list[PolarData]:
+    """Load polar CSVs from the measured polar directory.
+
+    Same as discover_polars but marks loaded polars with ``measured=True``
+    and logs how many were loaded.
+    """
+    polars: list[PolarData] = []
+    if not os.path.isdir(directory):
+        logger.info("No measured polar directory: %s", directory)
+        return polars
+    for csv_path in sorted(globmod.glob(os.path.join(directory, "*.csv"))):
+        p = load_polar(csv_path)
+        if p is not None:
+            p.measured = True
+            polars.append(p)
+            logger.info("Loaded measured polar: %s", p.name)
+    logger.info("Loaded %d measured polar(s) from %s", len(polars), directory)
     return polars
 
 

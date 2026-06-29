@@ -81,6 +81,11 @@ class State:
         self.polar_active: str = ""
         self.polar_tws_index: int = 0
         self.polar_display_names: dict[str, str] = {}
+        # Phase 7: polar files that failed to load (for Setup checklist feedback)
+        self.polar_load_failures: list[str] = []
+        # Phase 8: measured-polar overlay toggle on the polar rose
+        self.polar_show_measured: bool = False
+        self.polar_measured_overlay: str = ""
         self.saildef: dict[str, Any] = {}
         self.sailselect: str | None = None
         self.active_sails: list[str] = []
@@ -121,6 +126,36 @@ class State:
         self.route_total_nm: float = 0.0
         self.route_remaining_nm: float = 0.0
         self.route_eta_s: float | None = None
+        # Phase 9: scratch waypoints for in-app route creation
+        self.route_scratch_waypoints: list[Any] = []
+
+        # Polar Builder workspace: named session groups that accumulate a
+        # measured polar. `polar_builder_groups` is a list of dicts:
+        #   {"name": str, "polar": str, "sessions": list[str]}
+        # `sessions` holds absolute or config-relative paths to sailing log
+        # JSONL files. Persisted across restarts (see config.save_state).
+        self.polar_builder_groups: list[dict[str, Any]] = []
+        self.polar_builder_active_group: int = 0
+        # Live-feed buffer for the current sailing session, in coverage-bin
+        # units: (twa_bin_deg, tws_bin_kts, stw_kts). Cleared when a new
+        # sailing-log file is opened. Not persisted.
+        self.polar_builder_live_buffer: list[tuple[int, int, float]] = []
+        self.polar_builder_live_session: str | None = None
+        # Coverage cache keyed by group name, with a version tag (hash of the
+        # session list) so the page only rebuilds when sessions change. Not
+        # persisted.
+        self.polar_builder_coverage: dict[str, dict[tuple[int, int], list[float]]] = {}
+        self.polar_builder_coverage_version: dict[str, int] = {}
+        # Hit-test rects populated by the builder page renderer for click
+        # handling. Not persisted.
+        self._pb_group_rects: list[tuple[int, int, int, int, int]] = []
+        self._pb_session_rects: list[tuple[int, int, int, int, int, bool]] = []
+        self._pb_new_rect: tuple[int, int, int, int] | None = None
+        self._pb_del_rect: tuple[int, int, int, int] | None = None
+        self._pb_name_rect: tuple[int, int, int, int] | None = None
+        self._pb_polar_rects: list[tuple[int, int, int, int, int]] = []
+        self._pb_build_rect: tuple[int, int, int, int] | None = None
+        self._pb_build_status: str = ""
 
 
 def rad_to_deg(rad: float | None) -> float | None:
@@ -267,6 +302,34 @@ def toggle_sail(state: State, sail: str) -> None:
                         if s in state.active_sails:
                             state.active_sails.remove(s)
         state.active_sails.append(sail)
+
+
+def polar_sail_mismatch(state: State) -> str | None:
+    """Return a description of a polar/active-sail mismatch, or None if matched.
+
+    A mismatch occurs when the active polar is the mapped polar for one or
+    more sails in ``sail_to_polar``, but none of those sails are currently
+    active. This warns the sailor that the polar shown does not correspond
+    to the sail they've set.
+
+    Returns a short string like "polar Jib != sail Asym" for display, or
+    None when there is no mismatch (or no sails/polars to compare).
+    """
+    if not state.active_sails or not state.sail_to_polar or not state.polar_active:
+        return None
+    # Sails that map to the currently active polar
+    polar_sails = [s for s, p in state.sail_to_polar.items() if p == state.polar_active]
+    if not polar_sails:
+        # Active polar isn't mapped to any sail; nothing to warn about.
+        return None
+    # If any active sail maps to this polar, we're consistent.
+    for sail in state.active_sails:
+        if sail in polar_sails:
+            return None
+    # Mismatch: active polar maps to sails that aren't set.
+    active_desc = ", ".join(state.active_sails)
+    polar_desc = ", ".join(polar_sails)
+    return f"polar [{polar_desc}] != sail [{active_desc}]"
 
 
 def _refresh_route_cache(state: State, vmc_kts: float | None = None) -> None:

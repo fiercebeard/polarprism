@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import aiofiles
 import websockets
 
+from polars.coverage import bin_sample
 from polars.parser import auto_select_tws_index, compute_true_wind, lookup_speed
 
 from .models import (
@@ -347,3 +348,38 @@ async def perf_sampler(state):
         idx = auto_select_tws_index(polar, tws_kts)
         if idx is not None:
             state.polar_tws_index = idx
+
+
+BUILDER_SAMPLE_INTERVAL = 1.0
+
+
+async def polar_builder_sampler(state):
+    """Live-feed accumulator for the Polar Builder page.
+
+    One Hz: when a sailing log is recording and the boat is sailing, bins the
+    current apparent-wind sample and appends it to ``state.polar_builder_live_buffer``.
+    The live buffer auto-feeds the builder group whose ``polar`` matches
+    ``state.polar_active`` (see pages/polar_builder.py). Cleared when a new
+    sailing-log file is opened (detected via ``state.performance_log_file``).
+    """
+    while True:
+        await _sleep(BUILDER_SAMPLE_INTERVAL)
+        if not state.sailing_log_active or state.sailing_state != "sailing":
+            continue
+        # Detect new-session reset
+        if state.performance_log_file != state.polar_builder_live_session:
+            state.polar_builder_live_session = state.performance_log_file
+            state.polar_builder_live_buffer = []
+        awa_rad = state.values.get("windAngleApparent")
+        aws_ms = state.values.get("windSpeedApparent")
+        stw_ms = state.values.get("speedThroughWater")
+        if awa_rad is None or aws_ms is None or stw_ms is None:
+            continue
+        awa_norm = awa_rad
+        awa_deg = math.degrees(awa_rad)
+        if awa_deg > 180:
+            awa_norm = math.radians(awa_deg - 360)
+        binned = bin_sample(awa_norm, aws_ms, stw_ms)
+        if binned is None:
+            continue
+        state.polar_builder_live_buffer.append(binned)

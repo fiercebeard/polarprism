@@ -122,6 +122,7 @@ NAV_ITEMS = [
     ("navigation", "\u2693"),
     ("heading", "\u2197"),
     ("sailing", "\u26f5"),
+    ("builder", "\U0001f4d0"),
     ("replay", "\u23f5"),
     ("diagnostics", "\U0001f4ca"),
     ("settings", "\u2699"),
@@ -131,6 +132,7 @@ NAV_ITEM_LABELS = {
     "navigation": "Navigation",
     "heading": "Heading",
     "sailing": "Sailing",
+    "builder": "Polar Builder",
     "replay": "Replay",
     "diagnostics": "Diagnostics",
     "settings": "Settings",
@@ -140,9 +142,10 @@ NAV_TABS = {
     "navigation": ["Chart"],
     "heading": ["Compass", "Headings"],
     "sailing": ["Polars", "Wind", "Log", "Route"],
+    "builder": ["Builder"],
     "replay": [],
     "diagnostics": ["Values", "NMEA Log"],
-    "settings": ["SignalK", "Display", "Setup"],
+    "settings": ["SignalK", "Sails", "Display", "Setup"],
 }
 
 NAV_WIDTH_RATIO = 0.20
@@ -203,6 +206,17 @@ BTN_BG = (30, 40, 55)
 BTN_BORDER = (60, 80, 110)
 BTN_ACTIVE_BG = (40, 60, 90)
 BTN_ACTIVE_BORDER = (251, 191, 36)
+
+# Polar Builder coverage heatmap gradient (sample-count intensity).
+# Index 0 = under-sampled (faint), last = well-sampled (bright).
+COVERAGE_GRADIENT = [
+    (30, 50, 70),
+    (50, 90, 130),
+    (70, 140, 200),
+    (100, 180, 255),
+    (160, 220, 255),
+]
+COVERAGE_GAP = (18, 22, 30)
 
 SETUP_ROW_H = 36
 SETUP_EXPAND_CHEVRON = (100, 120, 150)

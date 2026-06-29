@@ -48,6 +48,7 @@ polar is available — render a side-by-side polar plot.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import logging
 import math
@@ -55,25 +56,18 @@ import os
 import sys
 from typing import Any
 
+from polars.coverage import (
+    DEFAULT_TWA_STEPS,
+    DEFAULT_TWS_STEPS,
+    TWA_BIN_DEG,
+    TWS_BIN_KTS,
+    coverage_mean,
+    interpolate_measured,
+)
 from polars.parser import discover_polars, load_polar, lookup_speed
-from signalk.models import MS_TO_KNOTS
 from signalk.rawlog import convert_raw_to_sailing_log
 
 logger = logging.getLogger("polarprism")
-
-# --- measured-polar binning constants --------------------------------------
-MIN_STW_KTS = 2.0
-MIN_AWS_KTS = 4.0
-TWA_BIN_DEG = 5
-TWS_BIN_KTS = 2
-TWA_MIN_DEG = 30
-TWA_MAX_DEG = 180
-TWS_MIN_KTS = 6
-TWS_MAX_KTS = 30
-MIN_SAMPLES_PER_BIN = 3
-
-DEFAULT_TWS_STEPS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]
-DEFAULT_TWA_STEPS = list(range(30, 181, 2))
 
 
 # --- `convert` subcommand --------------------------------------------------
@@ -172,98 +166,14 @@ def build_measured_polar(input_jsonl: str) -> dict[tuple[int, int], float]:
 
     Returns a dict keyed by ``(twa_bin, tws_bin)`` -> mean STW in knots, only
     for bins with at least ``MIN_SAMPLES_PER_BIN`` samples.
+
+    Binning logic lives in :mod:`polars.coverage` (single source of truth);
+    this wrapper builds coverage from one session then reduces to means.
     """
-    bins: dict[tuple[int, int], list[float]] = {}
+    from polars.coverage import build_coverage_from_session
 
-    with open(input_jsonl) as f:
-        for line in f:
-            e = json.loads(line)
-            awa = e.get("awa")
-            aws = e.get("aws")
-            stw = e.get("stw")
-
-            if awa is None or aws is None or stw is None:
-                continue
-            if stw < MIN_STW_KTS or aws < MIN_AWS_KTS:
-                continue
-
-            awa_norm = awa if awa <= 180 else awa - 360
-            awa_rad = math.radians(awa_norm)
-            aws_ms = aws / MS_TO_KNOTS
-            stw_ms = stw / MS_TO_KNOTS
-
-            sin_twa = aws_ms * math.sin(awa_rad) / max(stw_ms, 0.1)
-            cos_twa_num = aws_ms * math.cos(awa_rad) + stw_ms
-            cos_twa_den = max(stw_ms, 0.1) if stw_ms > 0.1 else aws_ms
-            cos_twa = (
-                cos_twa_num / cos_twa_den
-                if stw_ms > 0.1
-                else aws_ms * math.cos(awa_rad) / max(aws_ms, 0.01)
-            )
-
-            sin_twa = max(-1.0, min(1.0, sin_twa))
-            twa_rad = math.asin(sin_twa)
-            if cos_twa < 0:
-                twa_rad = math.copysign(math.pi - abs(twa_rad), twa_rad)
-
-            twa_deg = abs(math.degrees(twa_rad))
-            if twa_deg > 180:
-                twa_deg = 360 - twa_deg
-
-            tws_ms = math.sqrt(
-                max(
-                    0,
-                    (aws_ms * math.sin(awa_rad)) ** 2 + (aws_ms * math.cos(awa_rad) + stw_ms) ** 2,
-                )
-            )
-            tws_kts = tws_ms * MS_TO_KNOTS
-
-            twa_bin = round(twa_deg / TWA_BIN_DEG) * TWA_BIN_DEG
-            tws_bin = round(tws_kts / TWS_BIN_KTS) * TWS_BIN_KTS
-
-            if twa_bin < TWA_MIN_DEG or twa_bin > TWA_MAX_DEG:
-                continue
-            if tws_bin < TWS_MIN_KTS or tws_bin > TWS_MAX_KTS:
-                continue
-
-            bins.setdefault((twa_bin, tws_bin), []).append(stw)
-
-    return {
-        key: sum(speeds) / len(speeds)
-        for key, speeds in bins.items()
-        if len(speeds) >= MIN_SAMPLES_PER_BIN
-    }
-
-
-def interpolate_measured(
-    measured: dict[tuple[int, int], float], twa: float, tws: float
-) -> float | None:
-    """Bilinear (inverse-distance) interpolation of measured polar data."""
-    twa_bin = round(twa / TWA_BIN_DEG) * TWA_BIN_DEG
-    tws_bin = round(tws / TWS_BIN_KTS) * TWS_BIN_KTS
-
-    direct = measured.get((twa_bin, tws_bin))
-    if direct is not None:
-        return direct
-
-    nearby: list[tuple[int, int, float]] = []
-    for dt in (-TWA_BIN_DEG, 0, TWA_BIN_DEG):
-        for dw in (-TWS_BIN_KTS, 0, TWS_BIN_KTS):
-            key = (twa_bin + dt, tws_bin + dw)
-            if key in measured:
-                nearby.append((twa_bin + dt, tws_bin + dw, measured[key]))
-
-    if len(nearby) >= 3:
-        total_weight = 0.0
-        weighted_speed = 0.0
-        for t, w, s in nearby:
-            dist = math.sqrt((t - twa) ** 2 + (w - tws) ** 2)
-            weight = 1.0 / max(dist, 0.1)
-            total_weight += weight
-            weighted_speed += s * weight
-        return weighted_speed / total_weight if total_weight > 0 else None
-
-    return None
+    coverage = build_coverage_from_session(input_jsonl)
+    return coverage_mean(coverage)
 
 
 def write_polar_csv(
@@ -416,7 +326,10 @@ def _resolve_comparison_polar(
 
 def _run_polar(args: argparse.Namespace, basedir: str) -> int:
     polars_dir = args.polars_dir or os.path.join(basedir, "polars")
-    output_dir = args.output_dir or polars_dir
+    if args.output_dir is None and not args.no_measured_dir:
+        output_dir = os.path.join(polars_dir, "measured")
+    else:
+        output_dir = args.output_dir or polars_dir
 
     if args.input is None:
         sailing_logs_dir = os.path.join(basedir, "sailing_logs")
@@ -469,6 +382,11 @@ def _add_polar_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--input", default=None, help="Input sailing log JSONL file")
     p.add_argument("--output-dir", default=None, help="Output directory")
     p.add_argument(
+        "--no-measured-dir",
+        action="store_true",
+        help="Write to polars_dir instead of polars/measured/",
+    )
+    p.add_argument(
         "--polars-dir", default=None, help="Directory to search for the comparison polar"
     )
     p.add_argument(
@@ -484,6 +402,142 @@ def _add_polar_parser(subparsers: argparse._SubParsersAction) -> None:
     p.set_defaults(func=_run_polar)
 
 
+# --- `segment` subcommand --------------------------------------------------
+def _run_segment(args: argparse.Namespace, basedir: str) -> int:
+    """Trim or split a sailing log JSONL file.
+
+    Supports:
+      --start/--end: time-bounded trim (local HH:MM within the log's date)
+      --drop-state: filter out entries with a given sailing_state (e.g. motoring)
+      --split-on idle: split into multiple files at idle gaps > --gap-minutes
+    """
+    input_path = args.input
+    if not input_path or not os.path.exists(input_path):
+        print(f"Input file not found: {input_path}", file=sys.stderr)
+        return 1
+
+    output_dir = args.output_dir or os.path.dirname(input_path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+
+    with open(input_path) as f:
+        entries = [line for line in f if line.strip()]
+
+    if not entries:
+        print("Input file is empty.", file=sys.stderr)
+        return 1
+
+    # Parse all entries (skip event lines that don't have a "ts" + sample data)
+    parsed: list[dict[str, Any]] = []
+    for line in entries:
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "ts" in obj:
+            parsed.append(obj)
+
+    if not parsed:
+        print("No valid JSON entries found.", file=sys.stderr)
+        return 1
+
+    # Apply --drop-state filter
+    if args.drop_state:
+        before = len(parsed)
+        parsed = [e for e in parsed if e.get("sailing_state") != args.drop_state]
+        print(f"Dropped {before - len(parsed)} '{args.drop_state}' entries")
+
+    # Apply --start/--end time trim (HH:MM within the log's first-entry date)
+    if args.start or args.end:
+        first_ts = parsed[0]["ts"][:10]  # YYYY-MM-DD
+        if args.start:
+            start_str = f"{first_ts}T{args.start}"
+            parsed = [e for e in parsed if e["ts"] >= start_str]
+        if args.end:
+            end_str = f"{first_ts}T{args.end}"
+            parsed = [e for e in parsed if e["ts"] <= end_str]
+
+    if not parsed:
+        print("No entries remain after filtering.", file=sys.stderr)
+        return 0
+
+    # Split on idle gaps
+    if args.split_on == "idle":
+        gap_seconds = (args.gap_minutes or 5) * 60
+        segments = _split_on_idle(parsed, gap_seconds)
+    else:
+        segments = [parsed]
+
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    for i, seg in enumerate(segments):
+        if len(segments) == 1:
+            out_name = f"{base_name}_trim.jsonl"
+        else:
+            out_name = f"{base_name}_seg{i + 1}.jsonl"
+        out_path = os.path.join(output_dir, out_name)
+        with open(out_path, "w") as f:
+            for entry in seg:
+                f.write(json.dumps(entry) + "\n")
+        print(f"Wrote {len(seg)} entries to {out_path}")
+
+    return 0
+
+
+def _split_on_idle(entries: list[dict[str, Any]], gap_seconds: int) -> list[list[dict[str, Any]]]:
+    """Split entries into segments at idle-state gaps longer than gap_seconds."""
+    from datetime import datetime
+
+    segments: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = [entries[0]]
+    for prev, cur in itertools.pairwise(entries):
+        try:
+            t_prev = datetime.fromisoformat(prev["ts"].replace("Z", "+00:00"))
+            t_cur = datetime.fromisoformat(cur["ts"].replace("Z", "+00:00"))
+        except (ValueError, KeyError):
+            current.append(cur)
+            continue
+        gap = (t_cur - t_prev).total_seconds()
+        if prev.get("sailing_state") == "idle" and gap > gap_seconds:
+            segments.append(current)
+            current = [cur]
+        else:
+            current.append(cur)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _add_segment_parser(subparsers: argparse._SubParsersAction) -> None:
+    p = subparsers.add_parser(
+        "segment",
+        help="Trim or split a sailing log JSONL file",
+        description="Trim a sailing log by time window, drop motoring/idle stretches, "
+        "or split into multiple files at idle gaps.",
+    )
+    p.add_argument("--input", required=True, help="Input sailing log JSONL file")
+    p.add_argument("--output-dir", default=None, help="Output directory (default: same as input)")
+    p.add_argument("--start", default=None, help="Start time (HH:MM, within the log's date)")
+    p.add_argument("--end", default=None, help="End time (HH:MM, within the log's date)")
+    p.add_argument(
+        "--drop-state",
+        default=None,
+        choices=["motoring", "idle", "sailing"],
+        help="Filter out entries with the given sailing_state",
+    )
+    p.add_argument(
+        "--split-on",
+        default=None,
+        choices=["idle"],
+        help="Split into multiple files at idle gaps",
+    )
+    p.add_argument(
+        "--gap-minutes",
+        type=int,
+        default=5,
+        help="Minimum idle gap (minutes) to trigger a split (default: 5)",
+    )
+    p.set_defaults(func=_run_segment)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="log_analysis",
@@ -493,6 +547,7 @@ def main() -> None:
 
     _add_convert_parser(subparsers)
     _add_polar_parser(subparsers)
+    _add_segment_parser(subparsers)
 
     args = parser.parse_args()
     basedir = os.path.dirname(os.path.abspath(__file__))

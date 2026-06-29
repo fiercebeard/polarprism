@@ -54,6 +54,21 @@ def _get_url_input(state, rect, font, config) -> TextInput:
     return inp
 
 
+def _commit_sail_config(state, config) -> None:
+    """Persist the current sail groups/colors/polar_map to polarprism.toml."""
+    if config is None:
+        return
+    config.sail_groups = list(state.sail_groups)
+    config.sail_to_polar = dict(state.sail_to_polar)
+    config.sail_colors = dict(state.sail_colors)
+    try:
+        save_config(config)
+        state._sail_save_status = "Saved to " + (config._source_path or "polarprism.toml")
+    except Exception as exc:
+        _logger.warning("could not write sail config: %s", exc, exc_info=True)
+        state._sail_save_status = f"Save failed: {exc}"
+
+
 def _commit_url(state, config) -> str:
     """Persist the edited URL to polarprism.toml and signal a reconnect."""
     inp = getattr(state, "_sk_url_input", None)
@@ -251,6 +266,9 @@ def render(surface, font, font_sm, state, rect, sub_tab, config=None):
             ry += ROW_H
 
     elif sub_tab == 1:
+        _draw_sails_tab(surface, font, font_sm, state, rect, config)
+
+    elif sub_tab == 2:
         ry += 4
         draw_heading(surface, font_sm, x + 20, ry, "--- Display ---")
         ry += ROW_H
@@ -295,11 +313,6 @@ def render(surface, font, font_sm, state, rect, sub_tab, config=None):
 
         key_hint = font_sm.render("or [\u200b / ] keys", True, TEXT_DIM)
         surface.blit(key_hint, (x + 284, ry + 4))
-        ry += ROW_H
-
-        draw_row(
-            surface, font_sm, x, ry, "Fusion:", "[F] key to toggle", label_x=x + 20, value_x=x + 200
-        )
         ry += ROW_H
 
         ry += 12
@@ -401,6 +414,98 @@ def render(surface, font, font_sm, state, rect, sub_tab, config=None):
         _draw_setup_tab(surface, font, font_sm, state, rect, config)
 
 
+def _draw_sails_tab(surface, font, font_sm, state, rect, config):
+    """Render the Sails tab: show groups, colors, polar_map, and a Save button."""
+    x, y, _w, _h = rect
+    ry = y + 20
+    ry += 4
+    draw_heading(surface, font_sm, x + 20, ry, "--- Sail Groups ---")
+    ry += ROW_H
+    if not state.sail_groups:
+        ts = font_sm.render("(no sail groups — add a .saildef to polars/)", True, TEXT_DIM)
+        surface.blit(ts, (x + 20, ry))
+        ry += ROW_H
+    for group_name, group_sails in state.sail_groups:
+        draw_row(
+            surface,
+            font_sm,
+            x,
+            ry,
+            group_name.capitalize() + ":",
+            ", ".join(group_sails),
+            label_x=x + 20,
+            value_x=x + 120,
+        )
+        ry += ROW_H
+
+    ry += 12
+    draw_heading(surface, font_sm, x + 20, ry, "--- Sail Colors ---")
+    ry += ROW_H
+    for sail_name in sorted(state.sail_colors.keys()):
+        color = state.sail_colors[sail_name]
+        color_str = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+        # Draw a color swatch
+        swatch = pygame.Rect(x + 20, ry + 2, 16, 16)
+        pygame.draw.rect(surface, color, swatch, border_radius=2)
+        pygame.draw.rect(surface, BTN_BORDER, swatch, 1, border_radius=2)
+        draw_row(
+            surface,
+            font_sm,
+            x,
+            ry,
+            sail_name + ":",
+            color_str,
+            label_x=x + 44,
+            value_x=x + 120,
+        )
+        ry += ROW_H
+
+    ry += 12
+    draw_heading(surface, font_sm, x + 20, ry, "--- Polar Map ---")
+    ry += ROW_H
+    if not state.sail_to_polar:
+        ts = font_sm.render("(auto-derived from .saildef and polar filenames)", True, TEXT_DIM)
+        surface.blit(ts, (x + 20, ry))
+        ry += ROW_H
+    for sail_name, polar_name in sorted(state.sail_to_polar.items()):
+        draw_row(
+            surface,
+            font_sm,
+            x,
+            ry,
+            sail_name + ":",
+            polar_name,
+            label_x=x + 20,
+            value_x=x + 120,
+        )
+        ry += ROW_H
+
+    if state.sail_to_polar:
+        ts = font_sm.render(
+            "Note: polar_map drives display names only; selecting a sail never changes the active polar.",
+            True,
+            TEXT_DIM,
+        )
+        surface.blit(ts, (x + 20, ry))
+        ry += ROW_H
+
+    ry += 16
+    # Save button — persists current sail config to polarprism.toml
+    save_rect = pygame.Rect(x + 20, ry, 240, 28)
+    pygame.draw.rect(surface, BTN_ACTIVE_BG, save_rect, border_radius=4)
+    pygame.draw.rect(surface, BTN_ACTIVE_BORDER, save_rect, 1, border_radius=4)
+    st = font_sm.render("Save Sail Config to TOML", True, TEXT_WHITE)
+    surface.blit(st, (save_rect.x + 12, save_rect.y + (save_rect.h - st.get_height()) // 2))
+    state._sail_save_rect = save_rect
+    ry += ROW_H + 8
+
+    status = getattr(state, "_sail_save_status", "")
+    if status:
+        ts = font_sm.render(status, True, OK)
+        surface.blit(ts, (x + 20, ry))
+        ry += ROW_H
+
+
 def handle_click(state, mx, my, rect, sub_tab, config=None):
     if sub_tab == 0:
         url_input = getattr(state, "_sk_url_input", None)
@@ -410,12 +515,17 @@ def handle_click(state, mx, my, rect, sub_tab, config=None):
                 url_input.activate(config.signalk_url if config else "ws://localhost:3000")
             return None
         if url_input is not None and url_input.active:
-            # Click outside the field cancels the edit.
             url_input.deactivate()
         reconnect_rect = getattr(state, "_sk_reconnect_rect", None)
         if reconnect_rect and reconnect_rect.collidepoint(mx, my):
             return "sk_reconnect"
     elif sub_tab == 1:
+        # Sails tab: Save button
+        save_rect = getattr(state, "_sail_save_rect", None)
+        if save_rect and save_rect.collidepoint(mx, my):
+            _commit_sail_config(state, config)
+            return None
+    elif sub_tab == 2:
         minus_rect = getattr(state, "_offset_minus_rect", None)
         if minus_rect and minus_rect.collidepoint(mx, my):
             state.heading_offset -= 0.5
@@ -424,7 +534,7 @@ def handle_click(state, mx, my, rect, sub_tab, config=None):
         if plus_rect and plus_rect.collidepoint(mx, my):
             state.heading_offset += 0.5
             return None
-    elif sub_tab == 2:
+    elif sub_tab == 3:
         section_rects = getattr(state, "_setup_section_rects", None)
         if section_rects:
             expanded = getattr(state, "_setup_expanded", set())

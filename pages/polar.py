@@ -3,6 +3,16 @@ import time
 
 import pygame
 
+from pages.rose import (
+    compute_max_speed,
+    draw_center_dot,
+    draw_curve_lines,
+    draw_filled_curve,
+    draw_radials,
+    draw_rose_fill,
+    draw_speed_rings,
+    polar_curve_points,
+)
 from polars.parser import (
     calc_vmc,
     calc_vmg,
@@ -10,7 +20,13 @@ from polars.parser import (
     lookup_recommended_sail,
     lookup_speed,
 )
-from signalk.models import MS_TO_KNOTS, derive_true_heading, rad_to_deg, toggle_sail
+from signalk.models import (
+    MS_TO_KNOTS,
+    derive_true_heading,
+    polar_sail_mismatch,
+    rad_to_deg,
+    toggle_sail,
+)
 from theme import (
     BTN_ACTIVE_BG,
     BTN_ACTIVE_BORDER,
@@ -19,9 +35,6 @@ from theme import (
     CALC,
     OK,
     POLAR_BOAT_DOT,
-    POLAR_FILL,
-    POLAR_GRID,
-    POLAR_RING,
     POLAR_TARGET_DOT,
     SAILING_ACTIVE,
     SAILING_INACTIVE,
@@ -233,51 +246,18 @@ def draw_polar_rose(surface, font, font_sm, state, rect):
     cy = y + chart_h // 2
     r = min(chart_w, chart_h) // 2 - 20
 
-    max_speed = 0.0
+    base_max = 0.0
     for twa in polar.twa_list:
         for tws in polar.tws_list:
             spd = polar.speed_grid.get(twa, {}).get(tws, 0.0)
-            if spd > max_speed:
-                max_speed = spd
-    max_speed = math.ceil(max_speed / 2) * 2
-    if max_speed < 2:
-        max_speed = 10
+            if spd > base_max:
+                base_max = spd
+    max_speed = compute_max_speed(base_max)
     speed_step = 2
 
-    pygame.draw.circle(surface, POLAR_FILL, (cx, cy), r)
-
-    for s in range(speed_step, int(max_speed) + 1, speed_step):
-        ring_r = int(r * s / max_speed)
-        if ring_r > 0:
-            pygame.draw.circle(surface, POLAR_RING, (cx, cy), ring_r, 1)
-            lbl = font_sm.render(f"{s}", True, TEXT_DIM)
-            surface.blit(lbl, (cx + 2, cy - ring_r - lbl.get_height()))
-
-    for a_deg in range(0, 360, 30):
-        a_rad = math.radians(a_deg) - math.pi / 2
-        ex = cx + math.cos(a_rad) * r
-        ey = cy + math.sin(a_rad) * r
-        pygame.draw.line(surface, POLAR_GRID, (cx, cy), (int(ex), int(ey)), 1)
-        lbl_map = {
-            0: "B",
-            30: "30",
-            60: "60",
-            90: "90",
-            120: "120",
-            150: "150",
-            180: "180",
-            210: "150",
-            240: "120",
-            270: "90",
-            300: "60",
-            330: "30",
-        }
-        lbl_text = lbl_map.get(a_deg, "")
-        if lbl_text:
-            lx = cx + math.cos(a_rad) * (r + 14)
-            ly = cy + math.sin(a_rad) * (r + 14)
-            lbl = font_sm.render(lbl_text, True, TEXT_DIM)
-            surface.blit(lbl, (int(lx - lbl.get_width() // 2), int(ly - lbl.get_height() // 2)))
+    draw_rose_fill(surface, cx, cy, r)
+    draw_speed_rings(surface, font_sm, cx, cy, r, max_speed, speed_step)
+    draw_radials(surface, font_sm, cx, cy, r)
 
     active_tws_idx = state.polar_tws_index
     if active_tws_idx >= len(polar.tws_list):
@@ -287,36 +267,37 @@ def draw_polar_rose(surface, font, font_sm, state, rect):
         color = TWS_COLORS[ti % len(TWS_COLORS)]
         is_active = ti == active_tws_idx
         lw = 3 if is_active else 1
-        pts_port = []
-        pts_stbd = []
-        for twa_deg in polar.twa_list:
-            spd = polar.speed_grid.get(twa_deg, {}).get(tws, 0.0)
-            if spd <= 0:
-                continue
-            pr = r * spd / max_speed
-            a_rad = math.radians(twa_deg) - math.pi / 2
-            px = cx + math.cos(a_rad) * pr
-            py = cy + math.sin(a_rad) * pr
-            pts_port.append((px, py))
-            a_rad_s = math.radians(-twa_deg) - math.pi / 2
-            sx = cx + math.cos(a_rad_s) * pr
-            sy = cy + math.sin(a_rad_s) * pr
-            pts_stbd.append((sx, sy))
+        pts_port, pts_stbd = polar_curve_points(
+            cx,
+            cy,
+            r,
+            max_speed,
+            polar.twa_list,
+            lambda t, _tws=tws: polar.speed_grid.get(t, {}).get(_tws, 0.0),
+        )
 
-        if is_active and len(pts_port) > 2:
-            fill_pts = pts_port + list(reversed(pts_stbd))
-            fill_surf = pygame.Surface((w, h), pygame.SRCALPHA)
-            shifted = [(p[0] - x, p[1] - y) for p in fill_pts]
-            try:
-                pygame.draw.polygon(fill_surf, (*color, 30), shifted)
-                surface.blit(fill_surf, (x, y))
-            except Exception:
-                pass
+        if is_active:
+            draw_filled_curve(surface, pts_port, pts_stbd, color, 30, (x, y), (w, h))
 
-        if len(pts_port) > 1:
-            pygame.draw.lines(surface, color, False, [(int(p[0]), int(p[1])) for p in pts_port], lw)
-        if len(pts_stbd) > 1:
-            pygame.draw.lines(surface, color, False, [(int(p[0]), int(p[1])) for p in pts_stbd], lw)
+        draw_curve_lines(surface, pts_port, color, lw)
+        draw_curve_lines(surface, pts_stbd, color, lw)
+
+    # Phase 8: measured-polar overlay (dashed-style, secondary color)
+    if getattr(state, "polar_show_measured", False):
+        overlay_polar = _resolve_overlay_polar(state)
+        if overlay_polar is not None and overlay_polar is not polar:
+            overlay_color = (255, 140, 0)  # orange dashed-style
+            for ovs_tws in overlay_polar.tws_list:
+                o_pts_port, o_pts_stbd = polar_curve_points(
+                    cx,
+                    cy,
+                    r,
+                    max_speed,
+                    overlay_polar.twa_list,
+                    lambda t, _tws=ovs_tws: overlay_polar.speed_grid.get(t, {}).get(_tws, 0.0),
+                )
+                draw_curve_lines(surface, o_pts_port, overlay_color, 1)
+                draw_curve_lines(surface, o_pts_stbd, overlay_color, 1)
 
     awa_rad = state.values.get("windAngleApparent")
     aws_ms = state.values.get("windSpeedApparent")
@@ -413,7 +394,7 @@ def draw_polar_rose(surface, font, font_sm, state, rect):
                         vy = cy + math.sin(va_rad) * vmg_r
                         pygame.draw.circle(surface, WP_VMG_DOT, (int(vx), int(vy)), 3)
 
-    pygame.draw.circle(surface, TEXT_WHITE, (cx, cy), 3)
+    draw_center_dot(surface, cx, cy, 3)
 
     _draw_rec_overlay(surface, font_sm, state, polar, x, y, chart_w, h)
 
@@ -472,6 +453,14 @@ def _draw_polar_panel(surface, font, font_sm, state, rect, chart_w, polar):
         surface.blit(tl, (px + 6, py + 2))
         py += 24
 
+    # Measured overlay toggle hint
+    overlay_on = getattr(state, "polar_show_measured", False)
+    overlay_text = "Overlay: ON [M]" if overlay_on else "Overlay: off [M]"
+    overlay_color = OK if overlay_on else TEXT_DIM
+    ol = font_sm.render(overlay_text, True, overlay_color)
+    surface.blit(ol, (px, py + 2))
+    py += 20
+
     py += 4
     heading("--- Wind Speed (TWS) ---")
     wind_kts = _current_wind_kts(state)
@@ -511,6 +500,13 @@ def _draw_polar_panel(surface, font, font_sm, state, rect, chart_w, polar):
             tl = font_sm.render(sail, True, sc)
             surface.blit(tl, (px + 6, py + 2))
             py += 24
+
+    # Sail/polar mismatch warning (per "never auto-switch" decision)
+    mismatch = polar_sail_mismatch(state)
+    if mismatch is not None:
+        warn = font_sm.render(f"\u26a0 {mismatch}", True, WARN)
+        surface.blit(warn, (px, py + 2))
+        py += 22
 
     py += 4
     heading("--- Logging ---")
@@ -699,6 +695,26 @@ def _draw_polar_panel(surface, font, font_sm, state, rect, chart_w, polar):
         row("HDG to sail:", "---")
 
 
+def _resolve_overlay_polar(state):
+    """Pick the overlay polar: if active is theoretical, find a measured one; vice versa."""
+    active = state.polar_data.get(state.polar_active)
+    if active is None:
+        return None
+    # If active is measured, look for a matching theoretical (strip _Measured suffix)
+    if getattr(active, "measured", False):
+        base = state.polar_active.replace("_Measured", "")
+        return state.polar_data.get(base)
+    # Active is theoretical: look for a measured polar matching by name
+    measured_name = state.polar_active + "_Measured"
+    if measured_name in state.polar_data:
+        return state.polar_data[measured_name]
+    # Fall back to any measured polar
+    for _name, p in state.polar_data.items():
+        if getattr(p, "measured", False):
+            return p
+    return None
+
+
 def _handle_polar_click(state, mx, my, rect):
     x, y, w, _h = rect
     polar = state.polar_data.get(state.polar_active)
@@ -710,6 +726,11 @@ def _handle_polar_click(state, mx, my, rect):
     py = y + 8
     pw = w - chart_w - 20
 
+    # Click in the polar-rose chart area: select nearest TWS column by radius
+    if mx < px:
+        _select_tws_from_rose_click(state, polar, mx, my, x, y, chart_w, _h)
+        return None
+
     py += 22
     for _i, name in enumerate(state.polar_names):
         btn = pygame.Rect(px, py, pw, 20)
@@ -720,8 +741,18 @@ def _handle_polar_click(state, mx, my, rect):
             )
             return "polar_select"
         py += 24
+    # Overlay hint row (Phase 8)
+    py += 20
 
+    # TWS buttons — mirror the render layout in _draw_polar_panel
     py += 22 + 4
+    btn_w = min(40, (pw - 10) // max(len(polar.tws_list), 1))
+    for i, _tws in enumerate(polar.tws_list):
+        bx = px + i * (btn_w + 4)
+        btn = pygame.Rect(bx, py, btn_w, 18)
+        if btn.collidepoint(mx, my):
+            state.polar_tws_index = i
+            return None
     py += 26
 
     py += 4 + 22
@@ -759,6 +790,42 @@ def _handle_polar_click(state, mx, my, rect):
     return None
 
 
+def _select_tws_from_rose_click(
+    state, polar, mx: int, my: int, x: int, y: int, chart_w: int, h: int
+) -> None:
+    """Map a click on the polar rose to the nearest TWS column.
+
+    The rose is centered in the chart area; the radial distance from the
+    center, as a fraction of the rose radius, picks the nearest TWS band.
+    """
+    import math
+
+    cx = x + chart_w // 2
+    cy = y + h // 2
+    r = min(chart_w, h) // 2 - 20
+    if r <= 0 or not polar.tws_list:
+        return
+    dx = mx - cx
+    dy = my - cy
+    dist = math.hypot(dx, dy)
+    if dist > r + 8:  # allow a small margin
+        return
+    # Map radial fraction [0,1] onto the TWS range spanned by the polar.
+    frac = max(0.0, min(1.0, dist / r))
+    tws_min = polar.tws_list[0]
+    tws_max = polar.tws_list[-1]
+    target = tws_min if tws_max <= tws_min else tws_min + frac * (tws_max - tws_min)
+    # Nearest TWS index
+    best_i = 0
+    best_diff = abs(polar.tws_list[0] - target)
+    for i, tws in enumerate(polar.tws_list[1:], 1):
+        diff = abs(tws - target)
+        if diff < best_diff:
+            best_diff = diff
+            best_i = i
+    state.polar_tws_index = best_i
+
+
 def _handle_polar_key(state, key):
     polar = state.polar_data.get(state.polar_active)
     if polar is None:
@@ -783,4 +850,16 @@ def _handle_polar_key(state, key):
                 state.polar_tws_index, len(state.polar_data[state.polar_active].tws_list) - 1
             )
             return "polar_select"
+    elif key in (pygame.K_w, pygame.K_UP):
+        if state.polar_tws_index < len(polar.tws_list) - 1:
+            state.polar_tws_index += 1
+        return None
+    elif key in (pygame.K_s, pygame.K_DOWN):
+        if state.polar_tws_index > 0:
+            state.polar_tws_index -= 1
+        return None
+    elif key == pygame.K_m:
+        # Toggle measured-polar overlay (Phase 8)
+        state.polar_show_measured = not getattr(state, "polar_show_measured", False)
+        return None
     return None

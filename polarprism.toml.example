@@ -68,3 +68,31 @@ default_zoom = 9
 #
 # Strip this prefix from polar filenames for display
 # polar_name_prefix = ""
+
+# Polar loading options
+#
+# [polar]
+# Name of the polar to activate on startup (defaults to first alphabetically).
+# default_polar = ""
+#
+# Auto-discover polar diagrams in polars/measured/ (measured polars from
+# log_analysis.py polar). Loaded into the profile list but never auto-active.
+# load_measured = false
+#
+# Directory for measured polars (default: <polars_dir>/measured).
+# measured_dir = "polars/measured"
+
+# Coverage binning grid — used by Polar Builder and log_analysis.py polar.
+# Adjust these for your boat's sailing envelope (e.g. dinghies may want
+# lower TWS minimums). Defaults work for most cruising/racing boats.
+#
+# [coverage]
+# twa_min = 30
+# twa_max = 180
+# twa_bin = 5
+# tws_min = 6
+# tws_max = 30
+# tws_bin = 2
+# min_samples = 3
+# min_stw_kts = 2.0
+# min_aws_kts = 4.0

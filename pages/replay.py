@@ -30,7 +30,7 @@ def handle_replay_page_click(
     on_play: Any,
 ) -> str | None:
     """Handle click on replay page. Returns event string.
-    
+
     Event strings:
         "play" or "playing" - start replaying the selected file
         "stop" - exit replay mode

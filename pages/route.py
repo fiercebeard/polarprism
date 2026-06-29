@@ -17,6 +17,7 @@ from theme import (
     ROUTE_NEXT_WAYPOINT,
     ROUTE_WAYPOINT,
     SECTION,
+    TEXT_DIM,
     TEXT_LABEL,
     TEXT_MUTED,
     TEXT_VALUE,
@@ -241,6 +242,63 @@ def draw_route(surface, font, font_sm, state, rect):
     )
     state._route_cycle_rect = cycle_rect
 
+    # Previous-leg button (mirrors ADVANCE), disabled on the first leg
+    prev_enabled = state.route_leg_index > 0
+    prev_rect = pygame.Rect(col_label_x, py - 40, 220, 32)
+    prev_bg = BTN_BG if prev_enabled else ROUTE_DONE
+    prev_border = BTN_BORDER if prev_enabled else ROUTE_DONE
+    pygame.draw.rect(surface, prev_bg, prev_rect, border_radius=4)
+    pygame.draw.rect(surface, prev_border, prev_rect, 1, border_radius=4)
+    prev_color = TEXT_MUTED if prev_enabled else TEXT_DIM
+    bt = font.render("PREVIOUS LEG [P/B]", True, prev_color)
+    surface.blit(
+        bt,
+        (
+            prev_rect.x + prev_rect.w // 2 - bt.get_width() // 2,
+            prev_rect.y + prev_rect.h // 2 - bt.get_height() // 2,
+        ),
+    )
+    state._route_prev_rect = prev_rect if prev_enabled else None
+
+    # Phase 9: Mark current position + Save as route
+    mark_rect = pygame.Rect(col_label_x, py, 180, 28)
+    pygame.draw.rect(surface, BTN_BG, mark_rect, border_radius=4)
+    pygame.draw.rect(surface, BTN_BORDER, mark_rect, 1, border_radius=4)
+    has_pos = state.position.get("lat") is not None
+    mc = TEXT_MUTED if has_pos else TEXT_DIM
+    bt = font.render("MARK POSITION [M]", True, mc)
+    surface.blit(
+        bt,
+        (
+            mark_rect.x + mark_rect.w // 2 - bt.get_width() // 2,
+            mark_rect.y + mark_rect.h // 2 - bt.get_height() // 2,
+        ),
+    )
+    state._route_mark_rect = mark_rect if has_pos else None
+    py += 32
+
+    save_rect = pygame.Rect(col_label_x, py, 180, 28)
+    has_scratch = bool(state.route_scratch_waypoints)
+    save_bg = BTN_ACTIVE_BG if has_scratch else BTN_BG
+    save_border = BTN_ACTIVE_BORDER if has_scratch else BTN_BORDER
+    pygame.draw.rect(surface, save_bg, save_rect, border_radius=4)
+    pygame.draw.rect(surface, save_border, save_rect, 1, border_radius=4)
+    sc = TEXT_WHITE if has_scratch else TEXT_DIM
+    bt = font.render("SAVE AS ROUTE [S]", True, sc)
+    surface.blit(
+        bt,
+        (
+            save_rect.x + save_rect.w // 2 - bt.get_width() // 2,
+            save_rect.y + save_rect.h // 2 - bt.get_height() // 2,
+        ),
+    )
+    state._route_save_rect = save_rect if has_scratch else None
+    # Scratch waypoint count
+    if has_scratch:
+        cnt = font_sm.render(f"({len(state.route_scratch_waypoints)} marked)", True, TEXT_DIM)
+        surface.blit(cnt, (col_label_x + 190, py + 6))
+    py += 32
+
     py += 4
     heading("--- Legs ---")
     list_x = col_label_x
@@ -288,10 +346,29 @@ def _handle_route_click(state, mx, my, rect):
             state.route_leg_index += 1
             _refresh_route_cache(state)
             return "route_advance"
+    prev = getattr(state, "_route_prev_rect", None)
+    if prev is not None and prev.collidepoint(mx, my) and state.route_leg_index > 0:
+        state.route_leg_index -= 1
+        _refresh_route_cache(state)
+        return "route_back"
     cyc = getattr(state, "_route_cycle_rect", None)
     if cyc is not None and cyc.collidepoint(mx, my):
         _cycle_route(state, +1)
         return "route_cycle"
+    mark = getattr(state, "_route_mark_rect", None)
+    if mark is not None and mark.collidepoint(mx, my):
+        lat = state.position.get("lat")
+        lon = state.position.get("lon")
+        if lat is not None and lon is not None:
+            from routes.parser import Waypoint
+
+            wp = Waypoint(lat=lat, lon=lon, name=f"MARK{len(state.route_scratch_waypoints) + 1}")
+            state.route_scratch_waypoints.append(wp)
+        return None
+    save = getattr(state, "_route_save_rect", None)
+    if save is not None and save.collidepoint(mx, my):
+        _save_scratch_route(state)
+        return "route_saved"
     return None
 
 
@@ -305,9 +382,69 @@ def _handle_route_key(state, key):
     elif key == pygame.K_r:
         _cycle_route(state, +1)
         return "route_cycle"
-    elif key == pygame.K_b:
+    elif key in (pygame.K_b, pygame.K_p):
         if state.route_leg_index > 0:
             state.route_leg_index -= 1
             _refresh_route_cache(state)
             return "route_back"
+    elif key == pygame.K_m:
+        lat = state.position.get("lat")
+        lon = state.position.get("lon")
+        if lat is not None and lon is not None:
+            from routes.parser import Waypoint
+
+            wp = Waypoint(lat=lat, lon=lon, name=f"MARK{len(state.route_scratch_waypoints) + 1}")
+            state.route_scratch_waypoints.append(wp)
+        return None
+    elif key == pygame.K_s:
+        if state.route_scratch_waypoints:
+            _save_scratch_route(state)
+            return "route_saved"
     return None
+
+
+def _save_scratch_route(state) -> None:
+    """Write scratch waypoints to a GPX file in the routes directory and reload."""
+    import os
+    import time
+
+    from routes.parser import discover_routes
+
+    if not state.route_scratch_waypoints:
+        return
+    # Find the routes directory from any loaded route's source_path
+    routes_dir = "routes"
+    for r in state.routes.values():
+        if hasattr(r, "source_path") and r.source_path:
+            routes_dir = os.path.dirname(r.source_path)
+            break
+    os.makedirs(routes_dir, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    fname = f"scratch_{ts}.gpx"
+    fpath = os.path.join(routes_dir, fname)
+    _write_gpx(fpath, state.route_scratch_waypoints)
+    state.route_scratch_waypoints = []
+    # Reload routes
+    routes = discover_routes(routes_dir)
+    state.routes = {r.name: r for r in routes}
+    state.route_names = [r.name for r in routes]
+    if state.route_names and state.route_active not in state.routes:
+        state.route_active = state.route_names[0]
+        state.route_leg_index = 0
+        _refresh_route_cache(state)
+
+
+def _write_gpx(path: str, waypoints: list) -> None:
+    """Write waypoints to a GPX 1.1 file with a <route> element."""
+    with open(path, "w") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        f.write('<gpx version="1.1" xmlns="http://www.topografix.net/GPX/1/1">\n')
+        f.write("  <route>\n")
+        f.write("    <name>Scratch Route</name>\n")
+        for wp in waypoints:
+            f.write(f'    <rtept lat="{wp.lat}" lon="{wp.lon}">\n')
+            if wp.name:
+                f.write(f"      <name>{wp.name}</name>\n")
+            f.write("    </rtept>\n")
+        f.write("  </route>\n")
+        f.write("</gpx>\n")

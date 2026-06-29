@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from unittest.mock import MagicMock
 
 from replay.engine import ReplaySession, _parse_ts_to_float, _wall_from_ts
@@ -13,7 +11,24 @@ from replay.engine import ReplaySession, _parse_ts_to_float, _wall_from_ts
 class TestReplaySessionLoad:
     def test_loads_valid_log_file(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_test.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
@@ -37,7 +52,24 @@ class TestReplaySessionLoad:
     def test_unchanged_by_events(self, tmp_path: str) -> None:
         entries = [
             {"ts": "2026-01-01T10:00:00.000000+00:00", "event": "log_start", "polar": "X"},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_events.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
@@ -56,7 +88,24 @@ class TestReplaySessionLoad:
 
     def test_polar_name_property(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "MyPolar", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "MyPolar",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_pn.jsonl"
         f.write_text(json.dumps(entries[0]) + "\n")
@@ -66,9 +115,47 @@ class TestReplaySessionLoad:
     def test_mixed_entries_with_events(self, tmp_path: str) -> None:
         entries = [
             {"ts": "2026-01-01T10:00:00.000000+00:00", "event": "log_start", "polar": "X"},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": {"lat": 1.0, "lon": 2.0}, "headingTrue": 180.0, "cogTrue": 175.0, "sog": 5.0, "stw": 5.5, "twa": -90.0, "tws": 15.0, "twd": 200.0, "awa": 270.0, "aws": 12.0, "sailing_state": "sailing", "active_sails": ["Jib"], "polar_name": "Test1", "polar_target_speed": 6.0, "polar_performance_pct": 75.0},
-            {"ts": "2026-01-01T10:00:02.000000+00:00", "event": "sail_change", "active_sails": ["Jib", "Mainsail"]},
-            {"ts": "2026-01-01T10:00:03.000000+00:00", "position": {"lat": 1.1, "lon": 2.1}, "headingTrue": 181.0, "cogTrue": 176.0, "sog": 5.1, "stw": 5.6, "twa": -89.0, "tws": 15.5, "twd": 201.0, "awa": 271.0, "aws": 12.5, "sailing_state": "sailing", "active_sails": ["Jib", "Mainsail"], "polar_name": "Test1", "polar_target_speed": 6.1, "polar_performance_pct": 74.5},
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": {"lat": 1.0, "lon": 2.0},
+                "headingTrue": 180.0,
+                "cogTrue": 175.0,
+                "sog": 5.0,
+                "stw": 5.5,
+                "twa": -90.0,
+                "tws": 15.0,
+                "twd": 200.0,
+                "awa": 270.0,
+                "aws": 12.0,
+                "sailing_state": "sailing",
+                "active_sails": ["Jib"],
+                "polar_name": "Test1",
+                "polar_target_speed": 6.0,
+                "polar_performance_pct": 75.0,
+            },
+            {
+                "ts": "2026-01-01T10:00:02.000000+00:00",
+                "event": "sail_change",
+                "active_sails": ["Jib", "Mainsail"],
+            },
+            {
+                "ts": "2026-01-01T10:00:03.000000+00:00",
+                "position": {"lat": 1.1, "lon": 2.1},
+                "headingTrue": 181.0,
+                "cogTrue": 176.0,
+                "sog": 5.1,
+                "stw": 5.6,
+                "twa": -89.0,
+                "tws": 15.5,
+                "twd": 201.0,
+                "awa": 271.0,
+                "aws": 12.5,
+                "sailing_state": "sailing",
+                "active_sails": ["Jib", "Mainsail"],
+                "polar_name": "Test1",
+                "polar_target_speed": 6.1,
+                "polar_performance_pct": 74.5,
+            },
         ]
         f = tmp_path / "sailing_mixed.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
@@ -81,14 +168,50 @@ class TestReplaySessionLoad:
 class TestReplaySessionAdvance:
     def test_advance_updates_state(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": {"lat": 41.5, "lon": -82.0}, "headingTrue": 90.0, "cogTrue": 88.0, "sog": 6.0, "stw": 6.5, "twa": -100.0, "tws": 16.0, "twd": 200.0, "awa": 260.0, "aws": 13.0, "sailing_state": "sailing", "active_sails": ["Jib"], "polar_name": "TEST", "polar_target_speed": 7.0, "polar_performance_pct": 85.0},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": {"lat": 41.5, "lon": -82.0},
+                "headingTrue": 90.0,
+                "cogTrue": 88.0,
+                "sog": 6.0,
+                "stw": 6.5,
+                "twa": -100.0,
+                "tws": 16.0,
+                "twd": 200.0,
+                "awa": 260.0,
+                "aws": 13.0,
+                "sailing_state": "sailing",
+                "active_sails": ["Jib"],
+                "polar_name": "TEST",
+                "polar_target_speed": 7.0,
+                "polar_performance_pct": 85.0,
+            },
         ]
         f = tmp_path / "sailing_adv.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
         session = ReplaySession(str(f))
         import math
+
         from signalk.models import State
+
         state = State()
         state.polar_data["TEST"] = MagicMock()
         for _ in range(6):
@@ -107,7 +230,24 @@ class TestReplaySessionAdvance:
         lines = []
         for i in range(100):
             ts = f"2026-01-01T10:00:{i:02d}.000000+00:00"
-            entry = {"ts": ts, "position": None, "headingTrue": 180.0, "cogTrue": 175.0, "sog": 5.0, "stw": 5.5, "twa": -90.0, "tws": 15.0, "twd": 200.0, "awa": 270.0, "aws": 12.0, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None}
+            entry = {
+                "ts": ts,
+                "position": None,
+                "headingTrue": 180.0,
+                "cogTrue": 175.0,
+                "sog": 5.0,
+                "stw": 5.5,
+                "twa": -90.0,
+                "tws": 15.0,
+                "twd": 200.0,
+                "awa": 270.0,
+                "aws": 12.0,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            }
             lines.append(json.dumps(entry))
         f = tmp_path / "sailing_speed.jsonl"
         f.write_text("\n".join(lines) + "\n")
@@ -120,14 +260,46 @@ class TestReplaySessionAdvance:
 
     def test_pause_resumes(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": {"lat": 41.0, "lon": -82.0}, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": {"lat": 41.0, "lon": -82.0},
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_pause.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
         session = ReplaySession(str(f))
-        old_idx = session._sample_idx
-        import time
         # advance 100ms
         session.advance(state=MagicMock(), dt_ms=100)
         first_idx = session._sample_idx
@@ -140,8 +312,42 @@ class TestReplaySessionAdvance:
 
     def test_reset(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": {"lat": 41.0, "lon": -82.0}, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": {"lat": 41.0, "lon": -82.0},
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_reset.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
@@ -154,7 +360,24 @@ class TestReplaySessionAdvance:
 
     def test_speed_control_stepping(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": None, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": None,
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_speed_step.jsonl"
         f.write_text(json.dumps(entries[0]) + "\n")
@@ -173,9 +396,60 @@ class TestReplaySessionAdvance:
 
     def test_seek_to_sample(self, tmp_path: str) -> None:
         entries = [
-            {"ts": "2026-01-01T10:00:00.000000+00:00", "position": {"lat": 0.0, "lon": 0.0}, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": {"lat": 1.0, "lon": 1.0}, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
-            {"ts": "2026-01-01T10:00:02.000000+00:00", "position": {"lat": 2.0, "lon": 2.0}, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:00.000000+00:00",
+                "position": {"lat": 0.0, "lon": 0.0},
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": {"lat": 1.0, "lon": 1.0},
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
+            {
+                "ts": "2026-01-01T10:00:02.000000+00:00",
+                "position": {"lat": 2.0, "lon": 2.0},
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_seek.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
@@ -212,7 +486,24 @@ class TestReplaySessionEdgeCases:
     def test_event_entries_does_not_affect_progress(self, tmp_path: str) -> None:
         entries = [
             {"ts": "2026-01-01T10:00:00.000000+00:00", "event": "log_start"},
-            {"ts": "2026-01-01T10:00:01.000000+00:00", "position": {"lat": 1.0, "lon": 1.0}, "headingTrue": None, "cogTrue": None, "sog": None, "stw": None, "twa": None, "tws": None, "twd": None, "awa": None, "aws": None, "sailing_state": "sailing", "active_sails": [], "polar_name": "TEST", "polar_target_speed": None, "polar_performance_pct": None},
+            {
+                "ts": "2026-01-01T10:00:01.000000+00:00",
+                "position": {"lat": 1.0, "lon": 1.0},
+                "headingTrue": None,
+                "cogTrue": None,
+                "sog": None,
+                "stw": None,
+                "twa": None,
+                "tws": None,
+                "twd": None,
+                "awa": None,
+                "aws": None,
+                "sailing_state": "sailing",
+                "active_sails": [],
+                "polar_name": "TEST",
+                "polar_target_speed": None,
+                "polar_performance_pct": None,
+            },
         ]
         f = tmp_path / "sailing_evt.jsonl"
         f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")

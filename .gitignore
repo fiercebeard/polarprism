@@ -18,9 +18,11 @@ polarprism.toml
 # Generated measured-polar outputs (from log_analysis.py polar)
 polars/*_Measured.csv
 polars/*_vs_*.png
+polars/measured/
 
 # Editor / tooling
 .opencode/
+opencode.json
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

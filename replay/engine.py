@@ -4,7 +4,7 @@ import json
 import math
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 UTC = timezone.utc
 
@@ -30,12 +30,10 @@ def _wall_from_ts(ts_str: str) -> str:
 
 
 class ReplaySession:
-    SPEED_STEPS = [1, 2, 5, 10, 20]
-    MAX_SAMPLE_DEPTH = 3
+    SPEED_STEPS: ClassVar[list[int]] = [1, 2, 5, 10, 20]
+    MAX_SAMPLE_DEPTH: ClassVar[int] = 3
 
-    def __init__(
-        self, log_path: str, *, polar_names_map: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, log_path: str, *, polar_names_map: dict[str, Any] | None = None) -> None:
         self.log_path = log_path
         self._entries: list[dict[str, Any]] = []
         self._sample_idx = 0

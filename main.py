@@ -20,15 +20,19 @@ from config import (
     ws_url_to_rest_url,
 )
 from logging_config import setup_logging
-from pages import diagnostics, heading, navigation, replay as replay_page, sailing, settings
+from pages import diagnostics, heading, navigation, polar_builder, sailing, settings
+from pages import replay as replay_page
+from polars.coverage import seed_groups_from_logs
 from polars.parser import (
     build_sail_groups,
     build_sail_to_polar,
     compute_polar_display_names,
+    discover_measured_polars,
     discover_polars,
     discover_saildef,
     discover_sailselect,
 )
+from replay.engine import ReplaySession
 from routes.parser import discover_routes
 from signalk.client import (
     fetch_device_names,
@@ -37,27 +41,65 @@ from signalk.client import (
     logger,
     perf_sampler,
     performance_logger,
+    polar_builder_sampler,
     set_asyncio_sleep,
     set_log_paths,
     write_log_event,
     ws_reader,
 )
 from signalk.models import State, _refresh_route_cache
-from replay.engine import ReplaySession
 from theme import BG, NAV_WIDTH_RATIO, REPLAY_BAR_BG, REPLAY_COLOR, REPLAY_PROGRESS, TEXT_VALUE
 
 _logger = logging.getLogger("polarprism")
 
 
-def _init_state(polars_dir: str, routes_dir: str, config: Config) -> State:
+def _set_default_polar(state: State, config: Config, theoretical_polars: list) -> None:
+    """Choose the active polar: prefer config default, else first theoretical polar."""
+    if config.default_polar and config.default_polar in state.polar_data:
+        state.polar_active = config.default_polar
+    elif theoretical_polars:
+        state.polar_active = theoretical_polars[0].name
+
+
+def _init_state(polars_dir: str, measured_dir: str, routes_dir: str, config: Config) -> State:
     state = State()
 
+    # Track which CSVs fail to load (Phase 7: Setup checklist feedback)
+    import glob as globmod
+
+    csv_files = (
+        sorted(globmod.glob(os.path.join(polars_dir, "*.csv"))) if os.path.isdir(polars_dir) else []
+    )
     polars = discover_polars(polars_dir)
+    loaded_names = {p.name for p in polars}
+    for csv_path in csv_files:
+        fname = os.path.splitext(os.path.basename(csv_path))[0]
+        if fname not in loaded_names:
+            state.polar_load_failures.append(os.path.basename(csv_path))
+    if state.polar_load_failures:
+        _logger.warning(
+            "Failed to load %d polar(s): %s",
+            len(state.polar_load_failures),
+            state.polar_load_failures,
+        )
     for p in polars:
         state.polar_data[p.name] = p
         state.polar_names.append(p.name)
-    if state.polar_names:
-        state.polar_active = state.polar_names[0]
+
+    # Load measured polars separately if configured
+    if config.load_measured:
+        measured = discover_measured_polars(measured_dir)
+        for p in measured:
+            state.polar_data[p.name] = p
+            state.polar_names.append(p.name)
+
+    # Set active polar: prefer config default, then first theoretical polar
+    _set_default_polar(state, config, polars)
+
+    # Seed Polar Builder groups from on-disk sailing logs (auto-grouped by
+    # polar + active-sail combo). load_state later restores any user-edited
+    # groups from state.json, overriding the seed.
+    state.polar_builder_groups = seed_groups_from_logs(config.log_dir, state.polar_names)
 
     saildef = discover_saildef(polars_dir, state.polar_names or None)
     state.saildef = saildef
@@ -91,6 +133,12 @@ def _init_state(polars_dir: str, routes_dir: str, config: Config) -> State:
         state.polar_names, sail_to_polar, saildef
     )
 
+    # Append '(measured)' suffix to display names of loaded measured polars
+    if config.load_measured:
+        for name, pol in state.polar_data.items():
+            if pol.measured:
+                state.polar_display_names[name] = name + " (measured)"
+
     routes = discover_routes(routes_dir)
     for r in routes:
         state.routes[r.name] = r
@@ -116,6 +164,7 @@ def _spawn_tasks(state: State, config: Config) -> list:
         asyncio.ensure_future(logger(state)),
         asyncio.ensure_future(performance_logger(state)),
         asyncio.ensure_future(perf_sampler(state)),
+        asyncio.ensure_future(polar_builder_sampler(state)),
     ]
 
 
@@ -147,6 +196,9 @@ def _start_replay(state: State, log_path: str) -> None:
     state._replay_speed_index = 2
     state.connected = False
     state.polar_active = session.polar_name if session.polar_name else state.polar_active
+    # Feed replay samples into the Polar Builder live buffer
+    state.sailing_log_active = True
+    state.polar_builder_live_buffer = []
 
 
 def _stop_replay(state: State) -> None:
@@ -155,6 +207,9 @@ def _stop_replay(state: State) -> None:
     state.replay_log_path = ""
     state._replay_session = None
     state.connected = False
+    # Stop feeding the Polar Builder live buffer
+    state.sailing_log_active = False
+    state.polar_builder_live_buffer = []
 
 
 def _render_replay_bar(
@@ -185,7 +240,13 @@ def _render_replay_bar(
 
     # Speed label
     sp = font.render(session.speed_label, True, TEXT_VALUE)
-    screen.blit(sp, (surface_x + st.get_width() + cur.get_width() + 30, bar_y + bar_h // 2 - sp.get_height() // 2))
+    screen.blit(
+        sp,
+        (
+            surface_x + st.get_width() + cur.get_width() + 30,
+            bar_y + bar_h // 2 - sp.get_height() // 2,
+        ),
+    )
 
     # Progress bar
     progress_w = win_w - 40
@@ -230,6 +291,10 @@ def _render_frame(
             heading.render(screen, font, font_sm, state, content_rect, state.active_tab)
         elif state.active_nav == "sailing":
             sailing.render(screen, font, font_sm, state, content_rect, state.active_tab)
+        elif state.active_nav == "builder":
+            polar_builder.render(
+                screen, font, font_sm, state, content_rect, state.active_tab, config=config
+            )
         elif state.active_nav == "replay":
             _render_replay_page(screen, font, font_sm, state, content_rect, config)
         elif state.active_nav == "diagnostics":
@@ -256,14 +321,14 @@ def _render_replay_page(
     config: Config,
 ) -> None:
     """Render the replay hub page when on the Replay nav tab."""
-    log_files = _discover_log_files(config.log_dir)
-    session = getattr(state, "_replay_session", None)
     replay_page.draw_replay_page(screen, font, state, rect, config.log_dir)
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="PolarPrism - Sailing Navigation Instrument")
-    parser.add_argument("--config", dest="config_path", default=None, help="Path to polarprism.toml")
+    parser.add_argument(
+        "--config", dest="config_path", default=None, help="Path to polarprism.toml"
+    )
     parser.add_argument("--signalk-url", default=None, help="Signal K WebSocket URL")
     parser.add_argument("--polars-dir", default=None, help="Path to polars directory")
     parser.add_argument("--routes-dir", default=None, help="Path to routes directory")
@@ -308,12 +373,11 @@ async def main() -> None:
     if config.auto_convert_raw:
         _auto_convert_raw(config)
 
-    state = _init_state(config.polars_dir, config.routes_dir, config)
+    state = _init_state(config.polars_dir, config.measured_dir, config.routes_dir, config)
     load_state(state, config)
     set_asyncio_sleep(asyncio.sleep)
 
     _tasks: list = _spawn_tasks(state, config)
-    session: ReplaySession | None = None
     running = True
     dragging_chart = False
 
@@ -328,6 +392,7 @@ async def main() -> None:
 
             elif event.type == pygame.MOUSEWHEEL:
                 # Scrub replay timeline on mouse wheel
+                session = state._replay_session
                 if session is not None and session.entry_count > 0:
                     idx = session._sample_idx + int(event.y * 10)
                     session.seek_to(idx)
@@ -343,10 +408,10 @@ async def main() -> None:
                         _tasks = _spawn_tasks(state, config)
                     continue
 
+                session = state._replay_session
                 if event.key == pygame.K_ESCAPE:
                     if session is not None:
                         _stop_replay(state)
-                        session = None
                         continue
                     running = False
 
@@ -383,6 +448,10 @@ async def main() -> None:
                     result = sailing.handle_key(state, event.key, state.active_tab)
                     if result and result.startswith(("log_", "sail_")):
                         _tasks.append(asyncio.ensure_future(_handle_log_event(state, result)))
+                if state.active_nav == "builder":
+                    result = polar_builder.handle_key(state, event.key, state.active_tab)
+                    if result == "build_polar":
+                        _tasks.append(asyncio.ensure_future(_handle_build_polar(state, config)))
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -407,15 +476,16 @@ async def main() -> None:
 
                     # Handle replay page click for file list
                     if state.active_nav == "replay":
-                        log_files = _discover_log_files(config.log_dir)
-                        session = getattr(state, "_replay_session", None)
                         event_str = replay_page.handle_replay_page_click(
-                            state, mx, my, content_rect, config.log_dir,
-                             lambda fp: _start_replay(state, fp),
+                            state,
+                            mx,
+                            my,
+                            content_rect,
+                            config.log_dir,
+                            lambda fp: _start_replay(state, fp),
                         )
                         if event_str == "stop":
                             _stop_replay(state)
-                            session = None
                         continue
 
                     if state.active_nav == "navigation":
@@ -428,6 +498,12 @@ async def main() -> None:
                         result = sailing.handle_click(state, mx, my, content_rect, state.active_tab)
                         if result and result.startswith(("log_", "sail_")):
                             _tasks.append(asyncio.ensure_future(_handle_log_event(state, result)))
+                    elif state.active_nav == "builder":
+                        result = polar_builder.handle_click(
+                            state, mx, my, content_rect, state.active_tab, config=config
+                        )
+                        if result == "build_polar":
+                            _tasks.append(asyncio.ensure_future(_handle_build_polar(state, config)))
                     elif state.active_nav == "settings":
                         result = settings.handle_click(
                             state, mx, my, content_rect, state.active_tab, config=config
@@ -463,6 +539,12 @@ async def main() -> None:
         pygame.display.flip()
         dt_ms = clock.tick(config.fps)
         state._frame_dt_ms = dt_ms
+
+        # Drive replay playback forward each frame
+        session = state._replay_session
+        if session is not None and not session.is_paused:
+            session.advance(state, dt_ms)
+
         await asyncio.sleep(0)
 
     save_state(state, config)
@@ -505,6 +587,78 @@ async def _handle_log_event(state, result):
                 "polar": state.polar_active,
             },
         )
+
+
+async def _handle_build_polar(state: State, config: Config) -> None:
+    """Build a measured polar from the active builder group's sessions + live buffer.
+
+    Reuses the log_analysis.py pipeline (build_coverage_from_sessions +
+    coverage_mean + write_polar_csv) so the in-app result matches the CLI.
+    Writes to config.measured_dir; if config.load_measured is set, hot-reloads
+    the new polar into state.polar_data without a restart.
+    """
+    import os
+
+    from polars.coverage import build_coverage_from_sessions, coverage_mean
+    from polars.parser import load_polar
+
+    groups = state.polar_builder_groups
+    if not groups:
+        return
+    idx = max(0, min(state.polar_builder_active_group, len(groups) - 1))
+    group = groups[idx]
+    sessions = list(group.get("sessions", []))
+    polar_name = group.get("polar", "")
+
+    # Build coverage from the group's sessions + live buffer
+    coverage = build_coverage_from_sessions(sessions)
+    if group.get("polar") == state.polar_active and state.polar_builder_live_buffer:
+        for twa_bin, tws_bin, stw_kts in state.polar_builder_live_buffer:
+            coverage.setdefault((twa_bin, tws_bin), []).append(stw_kts)
+
+    measured = coverage_mean(coverage)
+    if not measured:
+        state._pb_build_status = "No coverage data to build from"
+        _logger.warning("build_polar: no coverage data for group '%s'", group.get("name"))
+        return
+
+    # Write the measured polar CSV
+    os.makedirs(config.measured_dir, exist_ok=True)
+    out_name = group.get("name", "Measured").replace(" ", "_")
+    csv_path = os.path.join(config.measured_dir, f"{out_name}_Measured.csv")
+    try:
+        from log_analysis import write_polar_csv
+
+        write_polar_csv(measured, csv_path)
+    except Exception as exc:
+        state._pb_build_status = f"Build failed: {exc}"
+        _logger.error("build_polar write failed: %s", exc, exc_info=True)
+        return
+
+    state._pb_build_status = f"Built {out_name}_Measured.csv"
+
+    # Hot-reload the measured polar if configured
+    if config.load_measured:
+        p = load_polar(csv_path)
+        if p is not None:
+            p.measured = True
+            state.polar_data[p.name] = p
+            if p.name not in state.polar_names:
+                state.polar_names.append(p.name)
+            state.polar_display_names[p.name] = p.name + " (measured)"
+
+    # Optionally generate a comparison image if matplotlib is available
+    comparison_polar = state.polar_data.get(polar_name)
+    if comparison_polar is not None:
+        try:
+            from log_analysis import generate_comparison_image
+
+            img_path = os.path.join(config.measured_dir, f"{out_name}_vs_{polar_name}.png")
+            generate_comparison_image(measured, comparison_polar, polar_name, img_path)
+        except ImportError:
+            _logger.debug("matplotlib not installed; skipping comparison image")
+        except Exception as exc:
+            _logger.warning("comparison image failed: %s", exc, exc_info=True)
 
 
 if __name__ == "__main__":

@@ -11,12 +11,12 @@ from theme import (
     BTN_BORDER,
     REPLAY_BAR_BG,
     REPLAY_COLOR,
-    REPLAY_PROGRESS,
     REPLAY_LABEL,
+    REPLAY_PROGRESS,
     TEXT_DIM,
+    TEXT_MUTED,
     TEXT_VALUE,
     TEXT_WHITE,
-    TEXT_MUTED,
 )
 
 BTN_W = 200
@@ -58,7 +58,7 @@ def _draw_playing_overlay(
     session: ReplaySession,
     rect: tuple[int, int, int, int],
 ) -> None:
-    x, y0, w, h = rect
+    x, y0, w, _h = rect
     py = y0 + 20
 
     status = "PAUSED" if session.is_paused else "PLAYING"

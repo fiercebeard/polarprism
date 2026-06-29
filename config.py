@@ -76,6 +76,19 @@ class Config:
     sail_to_polar: dict[str, str] = field(default_factory=dict)
     sail_colors: dict[str, tuple[int, int, int]] = field(default_factory=dict)
     polar_name_prefix: str = ""
+    default_polar: str = ""
+    load_measured: bool = False
+    measured_dir: str = ""
+    # Coverage grid controls
+    coverage_twa_min: int = 30
+    coverage_twa_max: int = 180
+    coverage_twa_bin: int = 5
+    coverage_tws_min: int = 6
+    coverage_tws_max: int = 30
+    coverage_tws_bin: int = 2
+    coverage_min_samples: int = 3
+    coverage_min_stw_kts: float = 2.0
+    coverage_min_aws_kts: float = 4.0
     _source_path: str | None = None
 
     def __post_init__(self) -> None:
@@ -96,6 +109,8 @@ class Config:
             self.error_log_dir = os.path.join(
                 os.path.expanduser("~"), ".local", "share", "polarprism"
             )
+        if not self.measured_dir:
+            self.measured_dir = os.path.join(self.polars_dir, "measured")
 
 
 def load_config(override_path: str | None = None) -> Config:
@@ -191,6 +206,34 @@ def load_config(override_path: str | None = None) -> Config:
         if prefix:
             cfg.polar_name_prefix = prefix
 
+        polar_cfg = data.get("polar", {})
+        if "default_polar" in polar_cfg:
+            cfg.default_polar = str(polar_cfg["default_polar"])
+        if "load_measured" in polar_cfg:
+            cfg.load_measured = bool(polar_cfg["load_measured"])
+        if "measured_dir" in polar_cfg:
+            cfg.measured_dir = str(polar_cfg["measured_dir"])
+
+        coverage_cfg = data.get("coverage", {})
+        if "twa_min" in coverage_cfg:
+            cfg.coverage_twa_min = int(coverage_cfg["twa_min"])
+        if "twa_max" in coverage_cfg:
+            cfg.coverage_twa_max = int(coverage_cfg["twa_max"])
+        if "twa_bin" in coverage_cfg:
+            cfg.coverage_twa_bin = int(coverage_cfg["twa_bin"])
+        if "tws_min" in coverage_cfg:
+            cfg.coverage_tws_min = int(coverage_cfg["tws_min"])
+        if "tws_max" in coverage_cfg:
+            cfg.coverage_tws_max = int(coverage_cfg["tws_max"])
+        if "tws_bin" in coverage_cfg:
+            cfg.coverage_tws_bin = int(coverage_cfg["tws_bin"])
+        if "min_samples" in coverage_cfg:
+            cfg.coverage_min_samples = int(coverage_cfg["min_samples"])
+        if "min_stw_kts" in coverage_cfg:
+            cfg.coverage_min_stw_kts = float(coverage_cfg["min_stw_kts"])
+        if "min_aws_kts" in coverage_cfg:
+            cfg.coverage_min_aws_kts = float(coverage_cfg["min_aws_kts"])
+
     cfg.__post_init__()
     return cfg
 
@@ -212,8 +255,15 @@ SETUP_CHECKLIST = [
     {
         "key": "polars",
         "title": "Load Polar Data",
-        "status_fn": lambda state, cfg: "ok" if state.polar_data else "missing",
+        "status_fn": lambda state, cfg: (
+            "warn"
+            if getattr(state, "polar_load_failures", [])
+            else "ok"
+            if state.polar_data
+            else "missing"
+        ),
         "ok_text": "loaded",
+        "warn_text": "Some polars failed to load",
         "missing_text": "None loaded",
         "steps": [
             "Place polar CSV files in the polars/ directory",
@@ -295,6 +345,8 @@ def save_state(state: Any, config: Config) -> None:
         "active_nav": state.active_nav,
         "active_tab": state.active_tab,
         "signalk_url": config.signalk_url,
+        "polar_builder_groups": state.polar_builder_groups,
+        "polar_builder_active_group": state.polar_builder_active_group,
     }
     try:
         with open(STATE_FILE, "w") as f:
@@ -339,6 +391,21 @@ def load_state(state: Any, config: Config) -> None:
     if data.get("signalk_url"):
         config.signalk_url = data["signalk_url"]
         config.signalk_rest_url = ws_url_to_rest_url(config.signalk_url)
+    if "polar_builder_groups" in data:
+        groups = data["polar_builder_groups"]
+        if isinstance(groups, list):
+            state.polar_builder_groups = [
+                g
+                for g in groups
+                if isinstance(g, dict)
+                and isinstance(g.get("name"), str)
+                and isinstance(g.get("polar"), str)
+                and isinstance(g.get("sessions"), list)
+            ]
+    if "polar_builder_active_group" in data:
+        idx = int(data["polar_builder_active_group"])
+        if 0 <= idx <= len(state.polar_builder_groups):
+            state.polar_builder_active_group = idx
 
 
 def save_config(config: Config) -> None:
@@ -356,6 +423,41 @@ def save_config(config: Config) -> None:
             pass
 
     existing.setdefault("signalk", {})["url"] = config.signalk_url
+
+    # Persist [sail] sections
+    if config.sail_groups:
+        sail_section = existing.setdefault("sail", {})
+        sail_section["groups"] = [{"name": g[0], "sails": g[1]} for g in config.sail_groups]
+    if config.sail_to_polar:
+        sail_section = existing.setdefault("sail", {})
+        sail_section["polar_map"] = dict(config.sail_to_polar)
+    if config.sail_colors:
+        sail_section = existing.setdefault("sail", {})
+        sail_section["colors"] = {k: list(v) for k, v in config.sail_colors.items()}
+    if config.polar_name_prefix:
+        sail_section = existing.setdefault("sail", {})
+        sail_section["polar_name_prefix"] = config.polar_name_prefix
+
+    # Persist [polar] sections
+    polar_section = existing.setdefault("polar", {})
+    if config.default_polar:
+        polar_section["default_polar"] = config.default_polar
+    if config.load_measured:
+        polar_section["load_measured"] = config.load_measured
+    if config.measured_dir:
+        polar_section["measured_dir"] = config.measured_dir
+
+    # Persist [coverage] sections
+    coverage_section = existing.setdefault("coverage", {})
+    coverage_section["twa_min"] = config.coverage_twa_min
+    coverage_section["twa_max"] = config.coverage_twa_max
+    coverage_section["twa_bin"] = config.coverage_twa_bin
+    coverage_section["tws_min"] = config.coverage_tws_min
+    coverage_section["tws_max"] = config.coverage_tws_max
+    coverage_section["tws_bin"] = config.coverage_tws_bin
+    coverage_section["min_samples"] = config.coverage_min_samples
+    coverage_section["min_stw_kts"] = config.coverage_min_stw_kts
+    coverage_section["min_aws_kts"] = config.coverage_min_aws_kts
 
     if not path:
         path = os.path.join(os.getcwd(), "polarprism.toml")
