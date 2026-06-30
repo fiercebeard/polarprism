@@ -37,22 +37,40 @@ defaults for date, time range, or timezone — supply them explicitly.
 ## `polar` — sailing log -> measured polar
 
 Feed it any sailing log produced by PolarPrism (or by `convert`) and it will
-bin observed (TWA, TWS, STW) samples into a polar grid, write the resulting
-measured polar as a CSV, and — if matplotlib is installed and a comparison
-polar is available — render a side-by-side polar plot.
+bin observed (TWA, TWS, STW) samples into a polar grid. Each run **accumulates**
+into the target measured polar: raw binned samples are kept in a sidecar
+`<name>.cov.json` next to the CSV, and bin means are recomputed across all
+accumulated sessions — so the polar gets richer as you sail more.
+
+Target selection (first match wins):
+  1. `--measured-name X` → `X.csv` (created if absent, else accumulated into).
+  2. Most-recently-modified `*.csv` in the output dir (accumulate into it —
+     rename it and you keep building that same polar under its new name).
+  3. `auto_polar_<YYYYMMDD>` derived from the sailing log filename (fresh start).
 
     python log_analysis.py polar [--input INPUT.jsonl] \\
-        [--output-dir DIR] [--polars-dir DIR] [--comparison-polar NAME.csv]
+        [--output-dir DIR] [--polars-dir DIR] [--comparison-polar NAME.csv] \\
+        [--measured-name NAME]
+
+## `polar --combine-best` — envelope across measured polars
+
+Produce a best-performance polar (max STW per bin) from several measured polar
+CSVs — e.g. separate jib / code0 / asym polars combined for a race:
+
+    python log_analysis.py polar --combine-best jib.csv code0.csv asym.csv \\
+        --measured-name race_best
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import itertools
 import json
 import logging
 import math
 import os
+import re
 import sys
 from typing import Any
 
@@ -61,8 +79,13 @@ from polars.coverage import (
     DEFAULT_TWS_STEPS,
     TWA_BIN_DEG,
     TWS_BIN_KTS,
+    combine_best,
     coverage_mean,
     interpolate_measured,
+    load_coverage_sidecar,
+    merge_coverage,
+    read_measured_polar_csv,
+    save_coverage_sidecar,
 )
 from polars.parser import discover_polars, load_polar, lookup_speed
 from signalk.rawlog import convert_raw_to_sailing_log
@@ -161,21 +184,6 @@ def _add_convert_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 # --- `polar` subcommand ----------------------------------------------------
-def build_measured_polar(input_jsonl: str) -> dict[tuple[int, int], float]:
-    """Build measured polar data from a sailing log JSONL file.
-
-    Returns a dict keyed by ``(twa_bin, tws_bin)`` -> mean STW in knots, only
-    for bins with at least ``MIN_SAMPLES_PER_BIN`` samples.
-
-    Binning logic lives in :mod:`polars.coverage` (single source of truth);
-    this wrapper builds coverage from one session then reduces to means.
-    """
-    from polars.coverage import build_coverage_from_session
-
-    coverage = build_coverage_from_session(input_jsonl)
-    return coverage_mean(coverage)
-
-
 def write_polar_csv(
     measured: dict[tuple[int, int], float],
     output_path: str,
@@ -324,13 +332,75 @@ def _resolve_comparison_polar(
     return None, "none"
 
 
+def _default_measured_name(input_path: str) -> str:
+    """Derive a default polar name `auto_polar_<YYYYMMDD>` from a sailing log path.
+
+    Looks for an 8-digit date in the filename (e.g. `sailing_20260605_214000.jsonl`
+    -> `auto_polar_20260605`). Falls back to today's UTC date when no date is
+    found in the filename.
+    """
+    match = re.search(r"(\d{8})", os.path.basename(input_path))
+    date_part = match.group(1) if match else _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d")
+    return f"auto_polar_{date_part}"
+
+
+def _most_recent_measured_csv(output_dir: str) -> str | None:
+    """Return the path of the most recently modified ``*.csv`` in output_dir, or None.
+
+    Tie-breaker: highest mtime wins; names sorted ascending as a stable secondary
+    key so the choice is deterministic when two files share an mtime.
+    """
+    try:
+        entries = os.listdir(output_dir)
+    except OSError:
+        return None
+    candidates = [f for f in entries if f.endswith(".csv")]
+    if not candidates:
+        return None
+    best: tuple[float, str] | None = None
+    for name in sorted(candidates):
+        path = os.path.join(output_dir, name)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, name)
+    return os.path.join(output_dir, best[1]) if best else None
+
+
+def _resolve_target(args: argparse.Namespace, output_dir: str, input_path: str) -> str:
+    """Resolve the target measured-polar CSV path (create-or-accumulate target).
+
+    Priority:
+      1. ``--measured-name`` (explicit — creates a new file if absent, else
+         accumulates into the existing one).
+      2. Most-recently-modified existing ``*.csv`` in output_dir (accumulate
+         into it; lets you rename a file and keep building it).
+      3. ``auto_polar_<YYYYMMDD>`` derived from the sailing log (fresh start).
+    """
+    if args.measured_name:
+        return os.path.join(output_dir, f"{args.measured_name}.csv")
+    existing = _most_recent_measured_csv(output_dir)
+    if existing is not None:
+        print(f"Accumulating into existing measured polar: {os.path.basename(existing)}")
+        return existing
+    return os.path.join(output_dir, f"{_default_measured_name(input_path)}.csv")
+
+
 def _run_polar(args: argparse.Namespace, basedir: str) -> int:
     polars_dir = args.polars_dir or os.path.join(basedir, "polars")
     if args.output_dir is None and not args.no_measured_dir:
         output_dir = os.path.join(polars_dir, "measured")
     else:
         output_dir = args.output_dir or polars_dir
+    os.makedirs(output_dir, exist_ok=True)
 
+    # --- combine-best mode: envelope across existing measured polar CSVs -----
+    if args.combine_best:
+        return _run_combine_best(args, output_dir)
+
+    # --- accumulate mode: merge a sailing log into the target measured polar --
     if args.input is None:
         sailing_logs_dir = os.path.join(basedir, "sailing_logs")
         try:
@@ -345,39 +415,94 @@ def _run_polar(args: argparse.Namespace, basedir: str) -> int:
     else:
         input_path = args.input
 
-    os.makedirs(output_dir, exist_ok=True)
+    from polars.coverage import build_coverage_from_session
 
-    measured = build_measured_polar(input_path)
-    if not measured:
+    new_coverage = build_coverage_from_session(input_path)
+    if not new_coverage:
         print("No measured data found. Check your sailing log.")
         return 0
 
-    print(f"Built measured polar with {len(measured)} data points")
+    csv_path = _resolve_target(args, output_dir, input_path)
+    accumulated = merge_coverage(load_coverage_sidecar(csv_path), new_coverage)
+    measured = coverage_mean(accumulated)
+    print(
+        f"Built measured polar with {len(measured)} data points "
+        f"({sum(len(v) for v in accumulated.values())} accumulated samples)"
+    )
 
-    csv_path = os.path.join(output_dir, f"{args.measured_name}.csv")
     write_polar_csv(measured, csv_path)
+    save_coverage_sidecar(accumulated, csv_path)
     print(f"Wrote measured polar to {csv_path}")
 
+    _maybe_render_comparison(args, polars_dir, output_dir, csv_path, measured)
+    return 0
+
+
+def _run_combine_best(args: argparse.Namespace, output_dir: str) -> int:
+    """Combine multiple measured polar CSVs into an envelope (max STW per bin)."""
+    inputs = args.combine_best or []
+    measured_dicts = []
+    for path in inputs:
+        resolved = path if os.path.isabs(path) else os.path.join(output_dir, path)
+        if not os.path.exists(resolved):
+            print(f"combine-best: polar not found: {resolved}", file=sys.stderr)
+            return 1
+        measured_dicts.append(read_measured_polar_csv(resolved))
+    if not measured_dicts:
+        print("combine-best: no input polars given", file=sys.stderr)
+        return 1
+
+    combined = combine_best(*measured_dicts)
+    if not combined:
+        print("combine-best: no overlapping/non-empty bins found.")
+        return 0
+
+    name = args.measured_name or "combined_best"
+    csv_path = os.path.join(output_dir, f"{name}.csv")
+    write_polar_csv(combined, csv_path)
+    print(f"Wrote combined-best polar ({len(combined)} bins) to {csv_path}")
+    return 0
+
+
+def _maybe_render_comparison(
+    args: argparse.Namespace,
+    polars_dir: str,
+    output_dir: str,
+    csv_path: str,
+    measured: dict[tuple[int, int], float],
+) -> None:
     comparison_polar, comparison_label = _resolve_comparison_polar(
         polars_dir, args.comparison_polar
     )
     if comparison_polar is None:
         print("No comparison polar available; skipping image.")
-        return 0
+        return
 
+    measured_name = os.path.splitext(os.path.basename(csv_path))[0]
     try:
-        img_path = os.path.join(output_dir, f"{args.measured_name}_vs_{comparison_label}.png")
+        img_path = os.path.join(output_dir, f"{measured_name}_vs_{comparison_label}.png")
         generate_comparison_image(measured, comparison_polar, comparison_label, img_path)
     except ImportError:
         print("matplotlib not installed; skipping comparison image.")
-    return 0
 
 
 def _add_polar_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
         "polar",
         help="Build a measured polar from a sailing log and compare to a theoretical polar",
-        description="Build a measured polar from a sailing log JSONL and compare to a theoretical polar CSV.",
+        description=(
+            "Build a measured polar from a sailing log JSONL and compare to a theoretical polar CSV.\n"
+            "\n"
+            "Accumulation: each run merges the sailing log into the target measured polar\n"
+            "(existing CSV, selected by --measured-name or the most recently modified one in\n"
+            "the output dir) and recomputes bin means across all accumulated sessions. Raw\n"
+            "binned samples are kept in a sidecar <name>.cov.json next to the CSV so means\n"
+            "stay correct as sessions accumulate.\n"
+            "\n"
+            "Combine-best: pass --combine-best a.csv b.csv [c.csv ...] to produce an envelope\n"
+            "(max STW per bin) across the listed measured polars, e.g. to merge separate\n"
+            "jib/code0/asym polars into one best-performance polar for a race."
+        ),
     )
     p.add_argument("--input", default=None, help="Input sailing log JSONL file")
     p.add_argument("--output-dir", default=None, help="Output directory")
@@ -396,8 +521,23 @@ def _add_polar_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--measured-name",
-        default="Measured",
-        help="Base name for the measured polar CSV (default: Measured -> Measured.csv)",
+        default=None,
+        help=(
+            "Base name for the measured polar CSV. When given, creates the file if absent or "
+            "accumulates into it if it exists. When omitted, the most recently modified "
+            "*.csv in the output dir is used; if none, an auto_polar_<YYYYMMDD> file is started."
+        ),
+    )
+    p.add_argument(
+        "--combine-best",
+        nargs="+",
+        default=None,
+        metavar="POLAR.csv",
+        help=(
+            "Combine the listed measured polar CSVs into an envelope (max STW per bin). "
+            "Paths may be relative to the output dir. Use --measured-name to name the result "
+            "(default: combined_best)."
+        ),
     )
     p.set_defaults(func=_run_polar)
 

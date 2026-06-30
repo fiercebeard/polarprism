@@ -408,6 +408,18 @@ async def main() -> None:
                         _tasks = _spawn_tasks(state, config)
                     continue
 
+                # If the Polar Builder group-name editor is active, it consumes
+                # all keys (so Backspace/letters aren't hijacked as group/delete
+                # shortcuts while editing a name).
+                pb_name_input = getattr(state, "_pb_name_input", None)
+                if (
+                    pb_name_input is not None
+                    and pb_name_input.active
+                    and state.active_nav == "builder"
+                ):
+                    polar_builder.handle_key(state, event, state.active_tab)
+                    continue
+
                 session = state._replay_session
                 if event.key == pygame.K_ESCAPE:
                     if session is not None:
@@ -449,9 +461,11 @@ async def main() -> None:
                     if result and result.startswith(("log_", "sail_")):
                         _tasks.append(asyncio.ensure_future(_handle_log_event(state, result)))
                 if state.active_nav == "builder":
-                    result = polar_builder.handle_key(state, event.key, state.active_tab)
+                    result = polar_builder.handle_key(state, event, state.active_tab)
                     if result == "build_polar":
                         _tasks.append(asyncio.ensure_future(_handle_build_polar(state, config)))
+                    elif result == "combine_best":
+                        _tasks.append(asyncio.ensure_future(_handle_combine_best(state, config)))
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -504,6 +518,10 @@ async def main() -> None:
                         )
                         if result == "build_polar":
                             _tasks.append(asyncio.ensure_future(_handle_build_polar(state, config)))
+                        elif result == "combine_best":
+                            _tasks.append(
+                                asyncio.ensure_future(_handle_combine_best(state, config))
+                            )
                     elif state.active_nav == "settings":
                         result = settings.handle_click(
                             state, mx, my, content_rect, state.active_tab, config=config
@@ -590,16 +608,27 @@ async def _handle_log_event(state, result):
 
 
 async def _handle_build_polar(state: State, config: Config) -> None:
-    """Build a measured polar from the active builder group's sessions + live buffer.
+    """Accumulate a measured polar from the active builder group's sessions + live buffer.
 
     Reuses the log_analysis.py pipeline (build_coverage_from_sessions +
     coverage_mean + write_polar_csv) so the in-app result matches the CLI.
+    Each build **accumulates**: the group's new coverage is merged into a
+    sidecar ``<name>.cov.json`` kept next to the CSV, and bin means are
+    recomputed across all accumulated sessions — so the polar gets richer
+    as you build more. Renaming the group (via the name field) retargets the
+    output file; a fresh name starts a fresh sidecar.
     Writes to config.measured_dir; if config.load_measured is set, hot-reloads
     the new polar into state.polar_data without a restart.
     """
     import os
 
-    from polars.coverage import build_coverage_from_sessions, coverage_mean
+    from polars.coverage import (
+        build_coverage_from_sessions,
+        coverage_mean,
+        load_coverage_sidecar,
+        merge_coverage,
+        save_coverage_sidecar,
+    )
     from polars.parser import load_polar
 
     groups = state.polar_builder_groups
@@ -611,31 +640,37 @@ async def _handle_build_polar(state: State, config: Config) -> None:
     polar_name = group.get("polar", "")
 
     # Build coverage from the group's sessions + live buffer
-    coverage = build_coverage_from_sessions(sessions)
+    new_coverage = build_coverage_from_sessions(sessions)
     if group.get("polar") == state.polar_active and state.polar_builder_live_buffer:
         for twa_bin, tws_bin, stw_kts in state.polar_builder_live_buffer:
-            coverage.setdefault((twa_bin, tws_bin), []).append(stw_kts)
-
-    measured = coverage_mean(coverage)
-    if not measured:
+            new_coverage.setdefault((twa_bin, tws_bin), []).append(stw_kts)
+    if not new_coverage:
         state._pb_build_status = "No coverage data to build from"
         _logger.warning("build_polar: no coverage data for group '%s'", group.get("name"))
         return
 
-    # Write the measured polar CSV
+    # Write the measured polar CSV (accumulate via sidecar)
     os.makedirs(config.measured_dir, exist_ok=True)
     out_name = group.get("name", "Measured").replace(" ", "_")
-    csv_path = os.path.join(config.measured_dir, f"{out_name}_Measured.csv")
+    csv_path = os.path.join(config.measured_dir, f"{out_name}.csv")
+    accumulated = merge_coverage(load_coverage_sidecar(csv_path), new_coverage)
+    measured = coverage_mean(accumulated)
+    if not measured:
+        state._pb_build_status = "No coverage data to build from"
+        _logger.warning("build_polar: no coverage data for group '%s'", group.get("name"))
+        return
     try:
         from log_analysis import write_polar_csv
 
         write_polar_csv(measured, csv_path)
+        save_coverage_sidecar(accumulated, csv_path)
     except Exception as exc:
         state._pb_build_status = f"Build failed: {exc}"
         _logger.error("build_polar write failed: %s", exc, exc_info=True)
         return
 
-    state._pb_build_status = f"Built {out_name}_Measured.csv"
+    total_samples = sum(len(v) for v in accumulated.values())
+    state._pb_build_status = f"Built {out_name}.csv ({total_samples} accumulated samples)"
 
     # Hot-reload the measured polar if configured
     if config.load_measured:
@@ -659,6 +694,70 @@ async def _handle_build_polar(state: State, config: Config) -> None:
             _logger.debug("matplotlib not installed; skipping comparison image")
         except Exception as exc:
             _logger.warning("comparison image failed: %s", exc, exc_info=True)
+
+
+async def _handle_combine_best(state: State, config: Config) -> None:
+    """Combine all loaded measured polars into an envelope (max STW per bin).
+
+    Reads every polar currently in ``state.polar_data`` flagged
+    ``measured=True``, takes the per-bin max STW across them, and writes a
+    combined ``combined_best.csv`` to the measured dir. This is the GUI
+    counterpart of ``log_analysis.py polar --combine-best``: e.g. merge
+    separate jib / code0 / asym measured polars into one best-performance
+    polar for a race. Hot-reloads the result if ``config.load_measured`` is set.
+    """
+    import os
+
+    from polars.coverage import combine_best, read_measured_polar_csv
+
+    measured_paths = _measured_polar_paths(state, config)
+    if len(measured_paths) < 2:
+        state._pb_build_status = "Need 2+ measured polars to combine"
+        return
+
+    measured_dicts = [read_measured_polar_csv(p) for p in measured_paths]
+    combined = combine_best(*measured_dicts)
+    if not combined:
+        state._pb_build_status = "Combined polar has no data"
+        return
+
+    os.makedirs(config.measured_dir, exist_ok=True)
+    csv_path = os.path.join(config.measured_dir, "combined_best.csv")
+    try:
+        from log_analysis import write_polar_csv
+
+        write_polar_csv(combined, csv_path)
+    except Exception as exc:
+        state._pb_build_status = f"Combine failed: {exc}"
+        _logger.error("combine_best write failed: %s", exc, exc_info=True)
+        return
+
+    state._pb_build_status = f"Built combined_best.csv ({len(combined)} bins)"
+
+    if config.load_measured:
+        from polars.parser import load_polar
+
+        p = load_polar(csv_path)
+        if p is not None:
+            p.measured = True
+            state.polar_data[p.name] = p
+            if p.name not in state.polar_names:
+                state.polar_names.append(p.name)
+            state.polar_display_names[p.name] = p.name + " (measured)"
+
+
+def _measured_polar_paths(state: State, config: Config) -> list[str]:
+    """Return paths to on-disk CSVs for all loaded measured polars that still exist."""
+    import os
+
+    paths: list[str] = []
+    for name, p in state.polar_data.items():
+        if not getattr(p, "measured", False):
+            continue
+        path = os.path.join(config.measured_dir, name + ".csv")
+        if os.path.exists(path):
+            paths.append(path)
+    return paths
 
 
 if __name__ == "__main__":

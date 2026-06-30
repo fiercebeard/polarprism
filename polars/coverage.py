@@ -113,6 +113,57 @@ def build_coverage_from_sessions(paths: list[str]) -> Coverage:
     return merge_coverage(*[build_coverage_from_session(p) for p in paths if p])
 
 
+# --- coverage sidecar (accumulation state for measured polars) ---------------
+COVERAGE_SUFFIX = ".cov.json"
+
+
+def _cov_path_for(csv_path: str) -> str:
+    """Return the sidecar coverage path paired with a measured polar CSV path."""
+    return os.path.splitext(csv_path)[0] + COVERAGE_SUFFIX
+
+
+def save_coverage_sidecar(coverage: Coverage, csv_path: str) -> str:
+    """Write the coverage dict (raw binned sample lists) to the sidecar next to
+    ``csv_path``. Keys are written as ``"twa,tws"`` strings (JSON object keys
+    must be strings); sample lists are JSON arrays of floats.
+
+    Returns the sidecar path.
+    """
+    side = _cov_path_for(csv_path)
+    payload = {f"{twa},{tws}": speeds for (twa, tws), speeds in coverage.items()}
+    tmp = side + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f)
+    os.replace(tmp, side)
+    return side
+
+
+def load_coverage_sidecar(csv_path: str) -> Coverage:
+    """Read the coverage sidecar paired with ``csv_path``.
+
+    Returns an empty Coverage dict when the sidecar is missing or unreadable
+    (treated as "no prior accumulation state" — start fresh).
+    """
+    side = _cov_path_for(csv_path)
+    try:
+        with open(side) as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    coverage: Coverage = {}
+    for key, speeds in payload.items():
+        try:
+            twa_s, tws_s = key.split(",")
+            twa = int(twa_s)
+            tws = int(tws_s)
+        except ValueError:
+            continue
+        if not isinstance(speeds, list):
+            continue
+        coverage[(twa, tws)] = [float(s) for s in speeds]
+    return coverage
+
+
 def coverage_mean(
     coverage: Coverage, min_samples: int = MIN_SAMPLES_PER_BIN
 ) -> dict[BinKey, float]:
@@ -127,6 +178,61 @@ def coverage_mean(
 def coverage_counts(coverage: Coverage) -> dict[BinKey, int]:
     """Return sample count per bin (no minimum filtering)."""
     return {key: len(speeds) for key, speeds in coverage.items()}
+
+
+def read_measured_polar_csv(csv_path: str) -> dict[BinKey, float]:
+    """Read a measured-polar CSV (PolarPrism format) back into a measured dict.
+
+    Inverse of ``log_analysis.write_polar_csv``: parses the ``TWA\\TWS`` header
+    and each row, returning ``(twa, tws) -> STW`` for non-empty cells. Empty
+    cells are skipped. Used by the combine-best envelope operation.
+    """
+    measured: dict[BinKey, float] = {}
+    try:
+        with open(csv_path) as f:
+            lines = [line.strip() for line in f if line.strip()]
+    except OSError:
+        return measured
+    if not lines:
+        return measured
+
+    header = lines[0]
+    sep = ";" if ";" in header else ","
+    tws_steps = [float(v) for v in header.split(sep)[1:]]
+
+    for line in lines[1:]:
+        parts = line.split(sep)
+        if len(parts) < 2:
+            continue
+        try:
+            twa = int(float(parts[0]))
+        except ValueError:
+            continue
+        for i, cell in enumerate(parts[1:]):
+            if i >= len(tws_steps) or cell == "":
+                continue
+            try:
+                measured[(twa, int(tws_steps[i]))] = float(cell)
+            except ValueError:
+                continue
+    return measured
+
+
+def combine_best(*measured_dicts: dict[BinKey, float]) -> dict[BinKey, float]:
+    """Envelope (max STW) across multiple measured polar dicts.
+
+    For each bin present in any input, returns the maximum STW across all
+    inputs — i.e. the fastest achievable speed at that (TWA, TWS) point given
+    the set of measured polars (e.g. jib + code0 + asym). Bins absent from all
+    inputs are absent from the output.
+    """
+    combined: dict[BinKey, float] = {}
+    for md in measured_dicts:
+        for key, speed in md.items():
+            prev = combined.get(key)
+            if prev is None or speed > prev:
+                combined[key] = speed
+    return combined
 
 
 def interpolate_measured(measured: dict[BinKey, float], twa: float, tws: float) -> float | None:

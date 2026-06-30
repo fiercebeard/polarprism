@@ -155,6 +155,7 @@ class State:
         self._pb_name_rect: tuple[int, int, int, int] | None = None
         self._pb_polar_rects: list[tuple[int, int, int, int, int]] = []
         self._pb_build_rect: tuple[int, int, int, int] | None = None
+        self._pb_combine_rect: tuple[int, int, int, int] | None = None
         self._pb_build_status: str = ""
 
 

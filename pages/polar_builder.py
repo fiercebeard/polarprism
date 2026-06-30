@@ -29,6 +29,7 @@ from pages.rose import (
     draw_rose_fill,
     draw_speed_rings,
 )
+from pages.ui import TextInput
 from polars.coverage import (
     TWA_BIN_DEG,
     TWA_MAX_DEG,
@@ -65,12 +66,61 @@ PAD = 12
 ROW_H = 22
 BTN_H = 24
 SECTION_GAP = 10
+NAME_FIELD_H = 28
 
 _logger = logging.getLogger("polarprism")
 
 # Max sample count that maps to the brightest gradient stop. Above this,
 # intensity is clamped to full bright.
 COVERAGE_MAX_COUNT = 30
+
+
+def _clock_dt_ms(state) -> int:
+    """Approximate frame delta for cursor blink. Falls back to 16ms."""
+    return getattr(state, "_frame_dt_ms", 16)
+
+
+def _get_name_input(state, rect, font, group) -> TextInput:
+    """Return the cached group-name TextInput for this frame, creating if needed.
+
+    The rect is updated each frame. The text is reset from the group name only
+    when the field is inactive (not being edited), so an in-progress edit is
+    never clobbered.
+    """
+    inp = getattr(state, "_pb_name_input", None)
+    if inp is None:
+        inp = TextInput(rect, font, group.get("name", ""))
+        state._pb_name_input = inp
+    inp.rect = rect
+    inp.font = font
+    if not inp.active:
+        inp.text = group.get("name", "")
+    return inp
+
+
+def _commit_group_name(state, group) -> None:
+    """Commit the edited name from the TextInput onto the group dict."""
+    inp = getattr(state, "_pb_name_input", None)
+    if inp is None:
+        return
+    new_name = inp.text.strip()
+    if not new_name:
+        inp.deactivate()
+        return
+    if new_name == group.get("name"):
+        inp.deactivate()
+        return
+    # Update the coverage cache key to match the new name, so existing coverage
+    # data isn't lost when the group is renamed.
+    old_name = group.get("name", "")
+    cov = state.polar_builder_coverage.pop(old_name, None)
+    ver = state.polar_builder_coverage_version.pop(old_name, None)
+    group["name"] = new_name
+    if cov is not None:
+        state.polar_builder_coverage[new_name] = cov
+    if ver is not None:
+        state.polar_builder_coverage_version[new_name] = ver
+    inp.deactivate()
 
 
 def render(surface, font, font_sm, state, rect, sub_tab, config=None):
@@ -117,10 +167,27 @@ def handle_click(state, mx, my, rect, sub_tab, config=None):
     return _handle_panel_click(state, mx, my, panel_x, y)
 
 
-def handle_key(state, key, sub_tab):
-    """Key handler for the builder section. Returns a result string or None."""
+def handle_key(state, event, sub_tab):
+    """Key handler for the builder section. Returns a result string or None.
+
+    When the group-name text input is active, it consumes all keys (so an
+    in-progress rename isn't hijacked by the group/letter shortcuts); Enter
+    commits the new name, Esc cancels.
+    """
     import pygame as pg
 
+    name_input = getattr(state, "_pb_name_input", None)
+    if name_input is not None and name_input.active:
+        result = name_input.handle_key(event)
+        if result == "commit":
+            groups = state.polar_builder_groups
+            idx = max(0, min(state.polar_builder_active_group, len(groups) - 1))
+            _commit_group_name(state, groups[idx])
+        elif result == "cancel":
+            name_input.deactivate()
+        return None
+
+    key = event.key
     if key == pg.K_n:
         _new_group(state)
     elif key == pg.K_DELETE or key == pg.K_BACKSPACE:
@@ -131,6 +198,8 @@ def handle_key(state, key, sub_tab):
             state.polar_builder_active_group = idx
     elif key == pg.K_b:
         return "build_polar"
+    elif key == pg.K_c:
+        return "combine_best"
     return None
 
 
@@ -287,6 +356,7 @@ def _draw_empty(surface, font, font_sm, state, rect):
     state._pb_del_rect = None
     state._pb_name_rect = None
     state._pb_build_rect = None
+    state._pb_combine_rect = None
     msg = font.render("No builder groups yet", True, TEXT_MUTED)
     surface.blit(msg, (x + w // 2 - msg.get_width() // 2, y + h // 2 - 20))
     hint = font_sm.render("Press N to create a group, or sail to auto-seed one", True, TEXT_DIM)
@@ -306,6 +376,7 @@ def _draw_panel(surface, font, font_sm, state, rect, chart_w, group, coverage, c
     state._pb_del_rect = None
     state._pb_name_rect = None
     state._pb_build_rect = None
+    state._pb_combine_rect = None
 
     py = _draw_groups_list(surface, font, font_sm, state, px, py, pw)
     py += SECTION_GAP
@@ -317,7 +388,9 @@ def _draw_panel(surface, font, font_sm, state, rect, chart_w, group, coverage, c
     py += SECTION_GAP
     py = _draw_coverage_stats(surface, font_sm, state, group, coverage, px, py, pw)
     py += SECTION_GAP
-    _draw_build_button(surface, font_sm, state, group, coverage, px, py, pw)
+    py = _draw_build_button(surface, font_sm, state, group, coverage, px, py, pw)
+    py += SECTION_GAP
+    _draw_combine_button(surface, font_sm, state, px, py, pw)
 
 
 def _heading(surface, font, px, py, text):
@@ -364,11 +437,13 @@ def _draw_groups_list(surface, font, font_sm, state, px, py, pw):
 
 def _draw_active_group_details(surface, font, font_sm, state, group, px, py, pw):
     py = _heading(surface, font, px, py, "--- Active Group ---")
-    name = group.get("name", "?")
-    name_rect = pygame.Rect(px, py, pw, BTN_H)
-    _btn(surface, font_sm, name_rect, name, False)
+    # Editable group-name field (determines the measured polar output name).
+    name_rect = pygame.Rect(px, py, pw, NAME_FIELD_H)
+    name_input = _get_name_input(state, name_rect, font_sm, group)
+    name_input.tick(_clock_dt_ms(state))
+    name_input.draw(surface, BTN_BG, BTN_BORDER, TEXT_WHITE)
     state._pb_name_rect = (name_rect.x, name_rect.y, name_rect.w, name_rect.h)
-    py += BTN_H + 4
+    py += NAME_FIELD_H + 4
     # Polar selector
     pol_lbl = font_sm.render("Polar:", True, TEXT_LABEL)
     surface.blit(pol_lbl, (px, py + 4))
@@ -476,6 +551,28 @@ def _draw_build_button(surface, font_sm, state, group, coverage, px, py, pw):
     return py
 
 
+def _draw_combine_button(surface, font_sm, state, px, py, pw):
+    """Draw the 'Combine Best' button.
+
+    Envelope (max STW per bin) across every measured polar currently loaded
+    into ``state.polar_data`` (those flagged ``measured=True``). Disabled when
+    fewer than two measured polars are available.
+    """
+    measured_count = sum(1 for p in state.polar_data.values() if getattr(p, "measured", False))
+    can_combine = measured_count >= 2
+    rect = pygame.Rect(px, py, pw, BTN_H + 4)
+    label = f"COMBINE BEST ({measured_count}) [C]"
+    color = OK if can_combine else TEXT_DIM
+    bg = BTN_ACTIVE_BG if can_combine else BTN_BG
+    border = BTN_ACTIVE_BORDER if can_combine else BTN_BORDER
+    pygame.draw.rect(surface, bg, rect, border_radius=4)
+    pygame.draw.rect(surface, border, rect, 1, border_radius=4)
+    tl = font_sm.render(label, True, color)
+    surface.blit(tl, (rect.x + 6, rect.y + (rect.h - tl.get_height()) // 2))
+    state._pb_combine_rect = (rect.x, rect.y, rect.w, rect.h) if can_combine else None
+    return py + BTN_H + 8
+
+
 def _heading_simple(surface, font_sm, px, py, text):
     ts = font_sm.render(text, True, SECTION)
     surface.blit(ts, (px, py))
@@ -501,13 +598,24 @@ def _handle_panel_click(state, mx, my, panel_x, panel_y):
     if state._pb_del_rect and _hit(mx, my, state._pb_del_rect):
         _delete_active_group(state)
         return None
-    # Build measured polar
-    if state._pb_build_rect and _hit(mx, my, state._pb_build_rect):
-        return "build_polar"
-    # Polar selector
+    # Group-name text input: click to activate, click-away to commit.
     groups = state.polar_builder_groups
     idx = max(0, min(state.polar_builder_active_group, len(groups) - 1))
     group = groups[idx]
+    name_input = getattr(state, "_pb_name_input", None)
+    if state._pb_name_rect and _hit(mx, my, state._pb_name_rect):
+        if name_input is not None:
+            name_input.activate(group.get("name", ""))
+        return None
+    if name_input is not None and name_input.active:
+        _commit_group_name(state, group)
+    # Build measured polar
+    if state._pb_build_rect and _hit(mx, my, state._pb_build_rect):
+        return "build_polar"
+    # Combine best
+    if state._pb_combine_rect and _hit(mx, my, state._pb_combine_rect):
+        return "combine_best"
+    # Polar selector
     for i, rx, ry, rw, rh in state._pb_polar_rects:
         if rx <= mx <= rx + rw and ry <= my <= ry + rh:
             if i < len(state.polar_names):
@@ -595,6 +703,9 @@ def _delete_active_group(state):
     name = state.polar_builder_groups[idx].get("name", "")
     state.polar_builder_coverage.pop(name, None)
     state.polar_builder_coverage_version.pop(name, None)
+    name_input = getattr(state, "_pb_name_input", None)
+    if name_input is not None:
+        name_input.deactivate()
     state.polar_builder_groups.pop(idx)
     if state.polar_builder_active_group >= len(state.polar_builder_groups):
         state.polar_builder_active_group = max(0, len(state.polar_builder_groups) - 1)

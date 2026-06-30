@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 
 from polars.coverage import (
     TWA_BIN_DEG,
@@ -13,10 +14,14 @@ from polars.coverage import (
     bin_sample,
     build_coverage_from_session,
     build_coverage_from_sessions,
+    combine_best,
     coverage_counts,
     coverage_mean,
     interpolate_measured,
+    load_coverage_sidecar,
     merge_coverage,
+    read_measured_polar_csv,
+    save_coverage_sidecar,
     seed_groups_from_logs,
 )
 from signalk.models import MS_TO_KNOTS
@@ -202,3 +207,85 @@ class TestSeedGroups:
 
     def test_missing_dir_returns_empty(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         assert seed_groups_from_logs(str(tmp_path / "nope"), ["Jib"]) == []
+
+
+class TestCoverageSidecar:
+    def test_save_then_load_roundtrip(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        csv_path = tmp_path / "auto_polar_20260101.csv"
+        coverage = {(60, 12): [5.0, 5.1, 5.2], (90, 10): [6.0, 6.1, 6.2]}
+        side = save_coverage_sidecar(coverage, str(csv_path))
+        assert os.path.exists(side)
+        assert side.endswith(".cov.json")
+        loaded = load_coverage_sidecar(str(csv_path))
+        assert loaded == coverage
+
+    def test_load_missing_sidecar_returns_empty(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        csv_path = tmp_path / "nope.csv"
+        assert load_coverage_sidecar(str(csv_path)) == {}
+
+    def test_load_malformed_sidecar_returns_empty(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        csv_path = tmp_path / "bad.csv"
+        (tmp_path / "bad.cov.json").write_text("{ not valid json")
+        assert load_coverage_sidecar(str(csv_path)) == {}
+
+    def test_load_skips_bad_keys(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        csv_path = tmp_path / "mixed.csv"
+        payload = {"60,12": [5.0, 5.1], "badkey": [1.0], "90,10": [6.0]}
+        (tmp_path / "mixed.cov.json").write_text(json.dumps(payload))
+        loaded = load_coverage_sidecar(str(csv_path))
+        assert loaded == {(60, 12): [5.0, 5.1], (90, 10): [6.0]}
+
+    def test_accumulation_merges_sessions(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # simulate two accumulate runs into the same target file
+        csv_path = tmp_path / "jib.csv"
+        cov1 = {(60, 12): [5.0, 5.1, 5.2]}
+        cov2 = {(60, 12): [5.3, 5.4], (90, 10): [6.0, 6.1, 6.2]}
+        accumulated = merge_coverage(load_coverage_sidecar(str(csv_path)), cov1)
+        save_coverage_sidecar(accumulated, str(csv_path))
+        accumulated = merge_coverage(load_coverage_sidecar(str(csv_path)), cov2)
+        save_coverage_sidecar(accumulated, str(csv_path))
+        loaded = load_coverage_sidecar(str(csv_path))
+        assert loaded[(60, 12)] == [5.0, 5.1, 5.2, 5.3, 5.4]
+        assert loaded[(90, 10)] == [6.0, 6.1, 6.2]
+
+
+class TestReadMeasuredPolarCsv:
+    def test_roundtrip_with_write_polar_csv(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from log_analysis import write_polar_csv
+
+        measured = {(60, 12): 5.20, (90, 10): 6.00}
+        csv_path = tmp_path / "measured.csv"
+        write_polar_csv(measured, str(csv_path), twa_steps=[60, 90], tws_steps=[10, 12])
+        read_back = read_measured_polar_csv(str(csv_path))
+        assert read_back == measured
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        assert read_measured_polar_csv(str(tmp_path / "nope.csv")) == {}
+
+    def test_empty_cells_skipped(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        csv_path = tmp_path / "sparse.csv"
+        csv_path.write_text("TWA\\TWS;10;12\n60;;5.20\n90;6.00;\n")
+        read_back = read_measured_polar_csv(str(csv_path))
+        assert read_back == {(60, 12): 5.20, (90, 10): 6.00}
+
+
+class TestCombineBest:
+    def test_envelope_takes_max_per_bin(self) -> None:
+        jib = {(60, 12): 5.0, (90, 10): 6.0}
+        code0 = {(60, 12): 5.8, (120, 14): 4.5}
+        asym = {(60, 12): 5.4, (90, 10): 6.5, (150, 16): 7.0}
+        combined = combine_best(jib, code0, asym)
+        assert combined[(60, 12)] == 5.8
+        assert combined[(90, 10)] == 6.5
+        assert combined[(120, 14)] == 4.5
+        assert combined[(150, 16)] == 7.0
+
+    def test_empty_inputs_return_empty(self) -> None:
+        assert combine_best() == {}
+        assert combine_best({}) == {}
+
+    def test_bin_present_in_only_one_polar_is_kept(self) -> None:
+        a = {(60, 12): 5.0}
+        b = {(90, 10): 6.0}
+        combined = combine_best(a, b)
+        assert combined == {(60, 12): 5.0, (90, 10): 6.0}
