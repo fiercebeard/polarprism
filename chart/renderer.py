@@ -411,26 +411,58 @@ def handle_chart_click(state, mx, my, rect):
     return "drag"
 
 
+def _normalize_lon(lon: float) -> float:
+    """Wrap longitude into [-180, 180)."""
+    return ((lon + 180.0) % 360.0) - 180.0
+
+
 def handle_chart_scroll(state, mx, my, rect, direction):
-    x, _y, w, _h = rect
-    if mx < x or mx > x + w:
+    """Zoom one step toward/away, keeping the point under the cursor fixed.
+
+    Zoom-about-cursor (like web maps) rather than about the center, so the
+    feature you point at stays put instead of sliding away as you zoom.
+    """
+    x, y, w, h = rect
+    if mx < x or mx > x + w or my < y or my > y + h:
         return
 
-    if direction > 0:
-        if state.chart_zoom < MAX_TILE_ZOOM:
-            state.chart_zoom += 1
-    else:
-        if state.chart_zoom > MIN_TILE_ZOOM:
-            state.chart_zoom -= 1
+    old_z = state.chart_zoom
+    new_z = max(MIN_TILE_ZOOM, min(MAX_TILE_ZOOM, old_z + (1 if direction > 0 else -1)))
+    if new_z == old_z:
+        return
+
+    # Cursor offset from the chart center, in tiles (matches draw_chart's projection).
+    off_x = (mx - (x + w // 2)) / TILE_SIZE
+    off_y = (my - (y + h // 2)) / TILE_SIZE
+
+    # Geographic point currently under the cursor.
+    cx_tile, cy_tile = latlon_to_tile_xy(state.chart_center_lat, state.chart_center_lon, old_z)
+    cur_lat, cur_lon = tile_xy_to_latlon(cx_tile + off_x, cy_tile + off_y, old_z)
+
+    # Re-center at the new zoom so that same point stays under the cursor.
+    state.chart_zoom = new_z
+    ncx_tile, ncy_tile = latlon_to_tile_xy(cur_lat, cur_lon, new_z)
+    lat, lon = tile_xy_to_latlon(ncx_tile - off_x, ncy_tile - off_y, new_z)
+    state.chart_center_lat = max(-85.0, min(85.0, lat))
+    state.chart_center_lon = _normalize_lon(lon)
 
 
 def handle_chart_drag(state, dx, dy, rect):
-    n = 2**state.chart_zoom
-    deg_per_px = 360.0 / (n * TILE_SIZE)
-    cos_lat = math.cos(math.radians(state.chart_center_lat))
-    state.chart_center_lon -= dx * deg_per_px / cos_lat
-    state.chart_center_lat += dy * deg_per_px
-    state.chart_center_lat = max(-85, min(85, state.chart_center_lat))
+    """Pan the chart by a pixel delta, exact at any latitude.
+
+    Convert the drag straight into Web-Mercator tile space (the projection
+    draw_chart uses) so the map tracks the cursor 1:1. Working in lat/lon
+    degrees instead needs a cos(latitude) correction that is easy to get
+    backwards — longitude is linear in Mercator, latitude is not — which made
+    panning drift and feel glitchy.
+    """
+    z = state.chart_zoom
+    cx_tile, cy_tile = latlon_to_tile_xy(state.chart_center_lat, state.chart_center_lon, z)
+    cx_tile -= dx / TILE_SIZE
+    cy_tile -= dy / TILE_SIZE
+    lat, lon = tile_xy_to_latlon(cx_tile, cy_tile, z)
+    state.chart_center_lat = max(-85.0, min(85.0, lat))
+    state.chart_center_lon = _normalize_lon(lon)
 
 
 def _draw_route_overlay(surface, state, ll_to_px, rect, font_sm):

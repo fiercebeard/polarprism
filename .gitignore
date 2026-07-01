@@ -37,3 +37,5 @@ AGENTS.md
 
 # Old reference docs (no longer used)
 qtvlm_docs/
+# Editable-install build metadata
+*.egg-info/
