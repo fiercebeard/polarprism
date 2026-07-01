@@ -442,11 +442,19 @@ async def main() -> None:
                 win_w, win_h = screen.get_size()
 
             elif event.type == pygame.MOUSEWHEEL:
-                # Scrub replay timeline on mouse wheel
                 session = state._replay_session
                 if session is not None and session.entry_count > 0:
+                    # Scrub replay timeline on mouse wheel
                     idx = session._sample_idx + int(event.y * 10)
                     session.seek_to(idx)
+                elif state.active_nav == "navigation":
+                    # Zoom the chart toward the cursor. SDL2 delivers wheel
+                    # input as MOUSEWHEEL (not button 4/5), so this is the
+                    # only place chart zoom-by-scroll can be handled.
+                    mx, my = pygame.mouse.get_pos()
+                    content_rect = nav.get_content_rect(win_w, win_h)
+                    direction = 1 if event.y > 0 else -1
+                    navigation.handle_scroll(state, mx, my, content_rect, direction)
 
             elif event.type == pygame.KEYDOWN:
                 # If the Settings URL editor is active, it consumes all keys
@@ -581,11 +589,6 @@ async def main() -> None:
                             for t in _tasks:
                                 t.cancel()
                             _tasks = _spawn_tasks(state, config)
-
-                if event.button in (4, 5) and mx >= content_x and state.active_nav == "navigation":
-                    content_rect = nav.get_content_rect(win_w, win_h)
-                    direction = 1 if event.button == 4 else -1
-                    navigation.handle_scroll(state, mx, my, content_rect, direction)
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
