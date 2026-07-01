@@ -11,6 +11,16 @@ import pygame
 
 import nav
 import tabs
+from boatpolars.coverage import seed_groups_from_logs
+from boatpolars.parser import (
+    build_sail_groups,
+    build_sail_to_polar,
+    compute_polar_display_names,
+    discover_measured_polars,
+    discover_polars,
+    discover_saildef,
+    discover_sailselect,
+)
 from config import (
     SAIL_COLOR_PALETTE,
     Config,
@@ -22,16 +32,6 @@ from config import (
 from logging_config import setup_logging
 from pages import diagnostics, heading, navigation, polar_builder, sailing, settings
 from pages import replay as replay_page
-from polars.coverage import seed_groups_from_logs
-from polars.parser import (
-    build_sail_groups,
-    build_sail_to_polar,
-    compute_polar_display_names,
-    discover_measured_polars,
-    discover_polars,
-    discover_saildef,
-    discover_sailselect,
-)
 from replay.engine import ReplaySession
 from routes.parser import discover_routes
 from signalk.client import (
@@ -155,6 +155,22 @@ def _init_state(polars_dir: str, measured_dir: str, routes_dir: str, config: Con
     return state
 
 
+async def tile_fetcher() -> None:
+    """Background chart-tile downloader.
+
+    The renderer queues missing tiles via ``queue_tile_fetch`` each frame; this
+    task drains that queue off the event loop so the map fills in online
+    without freezing the UI. Idles cheaply when nothing is queued.
+    """
+    from chart.tiles import process_pending_tiles
+
+    while True:
+        fetched = await process_pending_tiles()
+        # Poll faster while a fetch is in flight (responsive fill-in), slower
+        # when idle (negligible CPU).
+        await asyncio.sleep(0.2 if fetched else 1.0)
+
+
 def _spawn_tasks(state: State, config: Config) -> list:
     return [
         asyncio.ensure_future(fetch_vessel_name(state, config.signalk_rest_url)),
@@ -165,6 +181,7 @@ def _spawn_tasks(state: State, config: Config) -> list:
         asyncio.ensure_future(performance_logger(state)),
         asyncio.ensure_future(perf_sampler(state)),
         asyncio.ensure_future(polar_builder_sampler(state)),
+        asyncio.ensure_future(tile_fetcher()),
     ]
 
 
@@ -380,6 +397,8 @@ async def main() -> None:
     _tasks: list = _spawn_tasks(state, config)
     running = True
     dragging_chart = False
+    fullscreen = False
+    windowed_size = (win_w, win_h)
 
     while running:
         for event in pygame.event.get():
@@ -387,8 +406,20 @@ async def main() -> None:
                 running = False
 
             elif event.type == pygame.VIDEORESIZE:
-                win_w, win_h = event.w, event.h
-                screen = pygame.display.set_mode((win_w, win_h), pygame.RESIZABLE)
+                if not fullscreen:
+                    win_w, win_h = event.w, event.h
+                    windowed_size = (win_w, win_h)
+                    screen = pygame.display.set_mode((win_w, win_h), pygame.RESIZABLE)
+
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                # Global fullscreen toggle — useful on a dedicated nav display.
+                fullscreen = not fullscreen
+                if fullscreen:
+                    windowed_size = (win_w, win_h)
+                    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                else:
+                    screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
+                win_w, win_h = screen.get_size()
 
             elif event.type == pygame.MOUSEWHEEL:
                 # Scrub replay timeline on mouse wheel
@@ -622,14 +653,14 @@ async def _handle_build_polar(state: State, config: Config) -> None:
     """
     import os
 
-    from polars.coverage import (
+    from boatpolars.coverage import (
         build_coverage_from_sessions,
         coverage_mean,
         load_coverage_sidecar,
         merge_coverage,
         save_coverage_sidecar,
     )
-    from polars.parser import load_polar
+    from boatpolars.parser import load_polar
 
     groups = state.polar_builder_groups
     if not groups:
@@ -708,7 +739,7 @@ async def _handle_combine_best(state: State, config: Config) -> None:
     """
     import os
 
-    from polars.coverage import combine_best, read_measured_polar_csv
+    from boatpolars.coverage import combine_best, read_measured_polar_csv
 
     measured_paths = _measured_polar_paths(state, config)
     if len(measured_paths) < 2:
@@ -735,7 +766,7 @@ async def _handle_combine_best(state: State, config: Config) -> None:
     state._pb_build_status = f"Built combined_best.csv ({len(combined)} bins)"
 
     if config.load_measured:
-        from polars.parser import load_polar
+        from boatpolars.parser import load_polar
 
         p = load_polar(csv_path)
         if p is not None:

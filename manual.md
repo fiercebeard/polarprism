@@ -18,7 +18,8 @@ python main.py
 polarprism
 ```
 
-Press `Esc` or close the window to quit.
+Press `Esc` or close the window to quit. Press `F11` to toggle fullscreen —
+handy on a dedicated cockpit nav display.
 
 ## Interface Layout
 
@@ -42,6 +43,12 @@ Displays a tile-based nautical chart centered on the vessel's GPS position.
 | Center on vessel | Press `C` |
 
 The chart overlay shows the active route with waypoints. The current leg is highlighted in yellow; completed legs are dimmed.
+
+Chart tiles are cached under `tiles/`. When `[tile] online` is enabled (the
+default), any tile not already cached is downloaded in the background as you
+pan and zoom — a "downloading tiles…" badge appears at the top of the chart
+while fetches are in flight. With `online = false`, only tiles already on disk
+are shown, and the chart notes when none are cached.
 
 ### Heading (↗)
 

@@ -1,15 +1,18 @@
+import asyncio
 import json
 import logging
 import math
 import os
+import urllib.request
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import Any
 
 import aiofiles
 import websockets
 
-from polars.coverage import bin_sample
-from polars.parser import auto_select_tws_index, compute_true_wind, lookup_speed
+from boatpolars.coverage import bin_sample
+from boatpolars.parser import auto_select_tws_index, compute_true_wind, lookup_speed
 
 from .models import (
     MS_TO_KNOTS,
@@ -21,7 +24,29 @@ from .models import (
 
 LOG_INTERVAL = 1.0
 
+# Sent on every HTTP request. Tile/data servers (and OSM-family policies)
+# reject the bare ``Python-urllib`` default, so identify ourselves.
+USER_AGENT = "PolarPrism/0.1 (sailing navigation instrument)"
+
 _log = logging.getLogger("polarprism")
+
+
+def _http_get_json_sync(url: str, timeout: float = 5.0) -> Any:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+async def _http_get_json(url: str, timeout: float = 5.0) -> Any:
+    """Fetch + parse JSON without blocking the event loop.
+
+    The Signal K REST endpoints are polled from the same asyncio loop that
+    drives the pygame render; a synchronous ``urlopen`` here would freeze the
+    UI for up to ``timeout`` seconds on a slow/unreachable server. Run it on a
+    worker thread instead.
+    """
+    return await asyncio.to_thread(_http_get_json_sync, url, timeout)
+
 
 _log_file: str = ""
 _perf_log_dir: str = ""
@@ -102,10 +127,7 @@ async def _sleep(delay: float) -> None:
 
 async def fetch_vessel_name(state, rest_url: str):
     try:
-        import urllib.request
-
-        resp = urllib.request.urlopen(f"{rest_url}/vessels/self", timeout=5)
-        data = json.loads(resp.read())
+        data = await _http_get_json(f"{rest_url}/vessels/self")
         name = data.get("name")
         if name:
             state.vessel_name = name
@@ -115,10 +137,7 @@ async def fetch_vessel_name(state, rest_url: str):
 
 async def fetch_device_names(state, rest_url: str):
     try:
-        import urllib.request
-
-        resp = urllib.request.urlopen(f"{rest_url}/sources", timeout=5)
-        data = json.loads(resp.read())
+        data = await _http_get_json(f"{rest_url}/sources")
         for source_key, source_data in data.items():
             if not isinstance(source_data, dict):
                 continue
@@ -143,10 +162,7 @@ async def fetch_device_names(state, rest_url: str):
 async def fetch_multi_values(state, rest_url: str):
     while True:
         try:
-            import urllib.request
-
-            resp = urllib.request.urlopen(f"{rest_url}/vessels/self", timeout=5)
-            data = json.loads(resp.read())
+            data = await _http_get_json(f"{rest_url}/vessels/self")
             nav = data.get("navigation", {})
             for key in [
                 "magneticVariation",

@@ -21,6 +21,15 @@ import os
 
 import pygame
 
+from boatpolars.coverage import (
+    TWA_BIN_DEG,
+    TWA_MAX_DEG,
+    TWA_MIN_DEG,
+    build_coverage_from_sessions,
+    coverage_counts,
+    coverage_mean,
+)
+from boatpolars.parser import PolarData, compute_true_wind
 from pages.rose import (
     angle_to_screen,
     compute_max_speed,
@@ -30,15 +39,6 @@ from pages.rose import (
     draw_speed_rings,
 )
 from pages.ui import TextInput
-from polars.coverage import (
-    TWA_BIN_DEG,
-    TWA_MAX_DEG,
-    TWA_MIN_DEG,
-    build_coverage_from_sessions,
-    coverage_counts,
-    coverage_mean,
-)
-from polars.parser import PolarData, compute_true_wind
 from signalk.models import MS_TO_KNOTS
 from theme import (
     BG,

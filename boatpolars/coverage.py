@@ -13,7 +13,7 @@ import json
 import math
 import os
 
-from polars.parser import compute_true_wind
+from boatpolars.parser import compute_true_wind
 from signalk.models import MS_TO_KNOTS
 
 # --- coverage grid constants (single source of truth; log_analysis re-uses) --

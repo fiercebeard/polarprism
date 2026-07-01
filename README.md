@@ -133,9 +133,13 @@ subcommands are generic tools (no boat-specific defaults).
 ```bash
 ruff check .
 ruff format --check .
-mypy polars/ signalk/ routes/
+mypy boatpolars/ signalk/ routes/ chart/ config.py
 pytest tests/ -v
 ```
+
+> **Note:** the Python polar/coverage code lives in the `boatpolars/` package.
+> The `polars/` directory is a *data* folder (example CSVs, `.saildef`), not an
+> importable package — this avoids a name clash with the PyPI `polars` library.
 
 ## State persistence
 

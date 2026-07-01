@@ -74,7 +74,7 @@ import re
 import sys
 from typing import Any
 
-from polars.coverage import (
+from boatpolars.coverage import (
     DEFAULT_TWA_STEPS,
     DEFAULT_TWS_STEPS,
     TWA_BIN_DEG,
@@ -87,7 +87,7 @@ from polars.coverage import (
     read_measured_polar_csv,
     save_coverage_sidecar,
 )
-from polars.parser import discover_polars, load_polar, lookup_speed
+from boatpolars.parser import discover_polars, load_polar, lookup_speed
 from signalk.rawlog import convert_raw_to_sailing_log
 
 logger = logging.getLogger("polarprism")
@@ -415,7 +415,7 @@ def _run_polar(args: argparse.Namespace, basedir: str) -> int:
     else:
         input_path = args.input
 
-    from polars.coverage import build_coverage_from_session
+    from boatpolars.coverage import build_coverage_from_session
 
     new_coverage = build_coverage_from_session(input_path)
     if not new_coverage:

@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from polars.parser import (
+from boatpolars.parser import (
     PolarData,
     calc_vmc,
     calc_vmg,

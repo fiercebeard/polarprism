@@ -4,12 +4,12 @@ import math
 import time
 from unittest.mock import patch
 
+from boatpolars.parser import PolarData, auto_select_tws_index
 from pages.polar import (
     REC_REFRESH_SECONDS,
     _cached_polar_recommendation,
     _compute_polar_recommendation,
 )
-from polars.parser import PolarData, auto_select_tws_index
 from signalk.models import State
 
 
