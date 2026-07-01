@@ -17,6 +17,9 @@ DEFAULT_CHART_LON = -81.73
 DEFAULT_CHART_ZOOM = 9
 DEFAULT_FPS = 30
 DEFAULT_TILE_ONLINE = True
+# Opaque base map (land/water/coastline). The seamark layer is a transparent
+# overlay drawn on top of it.
+DEFAULT_TILE_BASE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_TILE_URL = "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
 
 SAIL_COLOR_PALETTE = [
@@ -97,6 +100,7 @@ class Config:
     local_tz_offset: float = 0.0
     fps: int = DEFAULT_FPS
     tile_online: bool = DEFAULT_TILE_ONLINE
+    tile_base_url: str = DEFAULT_TILE_BASE_URL
     tile_url: str = DEFAULT_TILE_URL
     sail_groups: list[tuple[str, list[str]]] = field(default_factory=list)
     sail_to_polar: dict[str, str] = field(default_factory=dict)
@@ -187,6 +191,8 @@ def load_config(override_path: str | None = None) -> Config:
         tile = data.get("tile", {})
         if "online" in tile:
             cfg.tile_online = bool(tile["online"])
+        if "base_url" in tile:
+            cfg.tile_base_url = tile["base_url"]
         if "url" in tile:
             cfg.tile_url = tile["url"]
 

@@ -26,6 +26,10 @@ default_zoom = 9
 [tile]
 # Fetch missing map tiles from the network
 # online = true
+# Opaque base map (land/water/coastline).
+# base_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+# Transparent seamark overlay (buoys, marks) drawn on top of the base map.
+# Set to "" to disable the overlay and show only the base map.
 # url = "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"
 
 [logging]
