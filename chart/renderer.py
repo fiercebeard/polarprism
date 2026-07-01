@@ -26,10 +26,13 @@ from theme import (
 )
 
 from .tiles import (
+    LAYER_BASE,
+    LAYER_SEAMARK,
     MAX_TILE_ZOOM,
     MIN_TILE_ZOOM,
     TILE_SIZE,
     get_tile,
+    has_overlay,
     is_tile_online,
     latlon_to_tile_xy,
     pending_tile_count,
@@ -283,11 +286,13 @@ def _draw_tile_status(
     Stays silent once tiles are on screen and nothing is queued — no point
     nagging when the chart is fully drawn.
     """
-    pending = pending_tile_count()
+    # Track only the base layer — the transparent seamark overlay may lag on a
+    # slow server without leaving the map itself blank, so don't nag for it.
+    pending = pending_tile_count(LAYER_BASE)
     if pending > 0:
-        msg = f"downloading tiles… ({pending})"
+        msg = f"downloading map… ({pending})"
     elif tiles_drawn == 0:
-        msg = "no cached tiles — enable [tile] online" if not is_tile_online() else "loading tiles…"
+        msg = "no cached tiles — enable [tile] online" if not is_tile_online() else "loading map…"
     else:
         return
 
@@ -336,20 +341,29 @@ def draw_chart(surface, font, font_sm, state, rect):
 
     surface.set_clip(chart_rect)
 
+    overlay_on = has_overlay()
     tiles_drawn = 0
     for tx in range(start_tx, end_tx):
         for ty in range(start_ty, end_ty):
             if tx < 0 or ty < 0 or tx >= n or ty >= n:
                 continue
-            tile_surf = get_tile(z, tx, ty)
-            if tile_surf is None:
-                # Not cached on disk — queue it for the background fetcher.
-                queue_tile_fetch(z, tx, ty)
-                continue
             px = x + pixel_offset_x + (tx - int(center_tile_x)) * TILE_SIZE
             py = y + pixel_offset_y + (ty - int(center_tile_y)) * TILE_SIZE
-            surface.blit(tile_surf, (int(px), int(py)))
-            tiles_drawn += 1
+
+            # Base map first (opaque), then the transparent seamark overlay.
+            base = get_tile(LAYER_BASE, z, tx, ty)
+            if base is not None:
+                surface.blit(base, (int(px), int(py)))
+                tiles_drawn += 1
+            else:
+                queue_tile_fetch(LAYER_BASE, z, tx, ty)
+
+            if overlay_on:
+                over = get_tile(LAYER_SEAMARK, z, tx, ty)
+                if over is not None:
+                    surface.blit(over, (int(px), int(py)))
+                else:
+                    queue_tile_fetch(LAYER_SEAMARK, z, tx, ty)
 
     surface.set_clip(None)
 

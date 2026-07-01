@@ -382,7 +382,7 @@ async def main() -> None:
 
     from chart.tiles import configure_tiles
 
-    configure_tiles(config.tiles_dir, config.tile_online, config.tile_url)
+    configure_tiles(config.tiles_dir, config.tile_online, config.tile_base_url, config.tile_url)
 
     log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heading_log.jsonl")
     set_log_paths(log_file, config.log_dir)

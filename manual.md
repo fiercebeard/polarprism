@@ -44,11 +44,16 @@ Displays a tile-based nautical chart centered on the vessel's GPS position.
 
 The chart overlay shows the active route with waypoints. The current leg is highlighted in yellow; completed legs are dimmed.
 
-Chart tiles are cached under `tiles/`. When `[tile] online` is enabled (the
-default), any tile not already cached is downloaded in the background as you
-pan and zoom — a "downloading tiles…" badge appears at the top of the chart
-while fetches are in flight. With `online = false`, only tiles already on disk
-are shown, and the chart notes when none are cached.
+The chart is drawn from two tile layers: an opaque **base map**
+(`[tile] base_url`, OpenStreetMap by default — land, water, coastline) with the
+transparent **OpenSeaMap seamark overlay** (`[tile] url` — buoys and marks) on
+top. Tiles are cached under `tiles/base/` and `tiles/seamark/`. When
+`[tile] online` is enabled (the default), any tile not already cached is
+downloaded in the background as you pan and zoom — a "downloading map…" badge
+appears at the top of the chart while base tiles are in flight. With
+`online = false`, only cached tiles are shown, and the chart notes when none
+are cached. Set `url = ""` to show only the base map without the seamark
+overlay.
 
 ### Heading (↗)
 
