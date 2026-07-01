@@ -28,28 +28,45 @@ def get_content_rect(window_w, window_h):
     return cx, cy + tab_h, cw, ch - tab_h
 
 
-def draw_nav(surface, font, font_sm, state, window_h, nav_w=None):
+ICON_X = 24
+ICON_SLOT_W = 24  # reserve a fixed column so labels align regardless of glyph width
+ICON_LABEL_GAP = 12
+
+
+def draw_nav(surface, font, font_sm, state, window_h, nav_w=None, icon_font=None):
     if nav_w is None:
         nav_w = max(int(surface.get_width() * NAV_WIDTH_RATIO), 160)
+    if icon_font is None:
+        icon_font = font
     nav_rect = pygame.Rect(0, 0, nav_w, window_h)
     pygame.draw.rect(surface, NAV_BG, nav_rect)
 
     y = 24
+    item_rects = []
+    label_x = ICON_X + ICON_SLOT_W + ICON_LABEL_GAP
     for key, icon in NAV_ITEMS:
         label = NAV_ITEM_LABELS[key]
         is_active = state.active_nav == key
-        text = f"{icon}  {label}"
-        if is_active:
-            ts = font.render(text, True, NAV_ACTIVE_TEXT)
-            tw = ts.get_width() + 32
-            pill_rect = pygame.Rect(8, y - 4, tw, ts.get_height() + 8)
-            pygame.draw.rect(surface, NAV_ACTIVE_BG, pill_rect, border_radius=9999)
-            surface.blit(ts, (24, y))
-        else:
-            ts = font.render(text, True, NAV_INACTIVE)
-            surface.blit(ts, (24, y))
-        y += ts.get_height() + NAV_GAP + 8
+        color = NAV_ACTIVE_TEXT if is_active else NAV_INACTIVE
 
+        icon_surf = icon_font.render(icon, True, color)
+        label_surf = font.render(label, True, color)
+        row_h = max(icon_surf.get_height(), label_surf.get_height())
+
+        if is_active:
+            pill_w = (label_x + label_surf.get_width()) - 8 + 16
+            pill_rect = pygame.Rect(8, y - 4, pill_w, row_h + 8)
+            pygame.draw.rect(surface, NAV_ACTIVE_BG, pill_rect, border_radius=9999)
+
+        # Center the icon in its slot and vertically align both to the row.
+        icon_x = ICON_X + (ICON_SLOT_W - icon_surf.get_width()) // 2
+        surface.blit(icon_surf, (icon_x, y + (row_h - icon_surf.get_height()) // 2))
+        surface.blit(label_surf, (label_x, y + (row_h - label_surf.get_height()) // 2))
+
+        item_rects.append((key, pygame.Rect(0, y - 4, nav_w, row_h + 8)))
+        y += row_h + NAV_GAP + 8
+
+    state._nav_item_rects = item_rects
     return y
 
 
@@ -57,19 +74,7 @@ def get_nav_click(mx, my, font, state, window_w):
     nav_w = max(int(window_w * NAV_WIDTH_RATIO), 160)
     if mx >= nav_w:
         return None
-
-    y = 24
-    for key, icon in NAV_ITEMS:
-        label = NAV_ITEM_LABELS[key]
-        text = f"{icon}  {label}"
-        is_active = state.active_nav == key
-        if is_active:
-            ts = font.render(text, True, NAV_ACTIVE_TEXT)
-        else:
-            ts = font.render(text, True, NAV_INACTIVE)
-        item_h = ts.get_height() + 8
-        if y - 4 <= my <= y + item_h + 4:
+    for key, rect in getattr(state, "_nav_item_rects", []):
+        if rect.collidepoint(mx, my):
             return key
-        y += ts.get_height() + NAV_GAP + 8
-
     return None

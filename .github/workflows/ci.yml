@@ -33,7 +33,7 @@ jobs:
         run: ruff format --check .
 
       - name: Mypy
-        run: mypy boatpolars/ signalk/ routes/ chart/ config.py
+        run: mypy boatpolars/ signalk/ routes/ chart/ config.py nav.py pages/ui.py
 
       - name: Pytest
         env:

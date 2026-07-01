@@ -512,7 +512,11 @@ def handle_click(state, mx, my, rect, sub_tab, config=None):
         url_rect = getattr(state, "_sk_url_rect", None)
         if url_rect and url_rect.collidepoint(mx, my):
             if url_input is not None:
-                url_input.activate(config.signalk_url if config else "ws://localhost:3000")
+                if not url_input.active:
+                    url_input.activate(config.signalk_url if config else "ws://localhost:3000")
+                # Place the caret where the user clicked (works while already
+                # editing too, so clicking mid-text just moves the caret).
+                url_input.place_cursor_from_x(mx)
             return None
         if url_input is not None and url_input.active:
             url_input.deactivate()

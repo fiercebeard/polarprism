@@ -118,14 +118,19 @@ def build_device_sections(state) -> list[dict]:
     return sections
 
 
+# Nav icons. All are Basic-Multilingual-Plane symbols (not astral-plane color
+# emoji) so they render as real glyphs in a symbol font like Segoe UI Symbol /
+# DejaVu Sans \u2014 SDL_ttf can't reliably rasterize color emoji. Rendered with the
+# dedicated icon font built in main(), not the monospace app font (which lacks
+# these glyphs and drew them all as blank .notdef boxes).
 NAV_ITEMS = [
-    ("navigation", "\u2693"),
-    ("heading", "\u2197"),
-    ("sailing", "\u26f5"),
-    ("builder", "\U0001f4d0"),
-    ("replay", "\u23f5"),
-    ("diagnostics", "\U0001f4ca"),
-    ("settings", "\u2699"),
+    ("navigation", "\u2693"),  # \u2693 anchor
+    ("heading", "\u2197"),  # \u2197 heading arrow
+    ("sailing", "\u26f5"),  # \u26f5 sailboat
+    ("builder", "\u22bf"),  # \u22bf set-square (Polar Builder)
+    ("replay", "\u23f5"),  # \u23f5 play
+    ("diagnostics", "\u25a6"),  # \u25a6 data grid
+    ("settings", "\u2699"),  # \u2699 gear
 ]
 
 NAV_ITEM_LABELS = {
