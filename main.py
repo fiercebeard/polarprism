@@ -274,6 +274,24 @@ def _render_replay_bar(
     pygame.draw.rect(screen, REPLAY_PROGRESS, fill_rect)
 
 
+def _build_icon_font(size: int) -> pygame.font.Font:
+    """Build a symbol-capable font for the nav icons.
+
+    The monospace app font contains none of the nav glyphs (⚓ ↗ ⛵ …) and
+    renders them all as blank ``.notdef`` boxes, so icons appeared missing.
+    Prefer a system symbol font (Segoe UI Symbol on Windows, DejaVu Sans on
+    Linux); fall back to the default font if none is found.
+    """
+    for name in ("segoeuisymbol", "dejavusans", "notosanssymbols2", "freesans", "symbola"):
+        path = pygame.font.match_font(name)
+        if path:
+            try:
+                return pygame.font.Font(path, size)
+            except Exception:
+                continue
+    return pygame.font.Font(None, size + 2)
+
+
 def _render_frame(
     screen: pygame.Surface,
     state: State,
@@ -282,13 +300,14 @@ def _render_frame(
     win_w: int,
     win_h: int,
     config: Config,
+    icon_font: pygame.font.Font | None = None,
 ) -> None:
     nav_w = max(int(win_w * NAV_WIDTH_RATIO), 160)
     content_x = nav_w
     content_w = win_w - nav_w
 
     try:
-        nav.draw_nav(screen, font, font_sm, state, win_h, nav_w)
+        nav.draw_nav(screen, font, font_sm, state, win_h, nav_w, icon_font=icon_font)
     except Exception as e:
         _logger.error("nav: %s", e, exc_info=True)
 
@@ -379,6 +398,7 @@ async def main() -> None:
         font_sm = pygame.font.SysFont("monospace", 14)
     except Exception:
         font_sm = pygame.font.Font(None, 16)
+    icon_font = _build_icon_font(20)
 
     from chart.tiles import configure_tiles
 
@@ -584,7 +604,7 @@ async def main() -> None:
                 state.drag_start = (mx, my)
 
         screen.fill(BG)
-        _render_frame(screen, state, font, font_sm, win_w, win_h, config)
+        _render_frame(screen, state, font, font_sm, win_w, win_h, config, icon_font=icon_font)
         pygame.display.flip()
         dt_ms = clock.tick(config.fps)
         state._frame_dt_ms = dt_ms
