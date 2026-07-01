@@ -30,7 +30,10 @@ from .tiles import (
     MIN_TILE_ZOOM,
     TILE_SIZE,
     get_tile,
+    is_tile_online,
     latlon_to_tile_xy,
+    pending_tile_count,
+    queue_tile_fetch,
     tile_xy_to_latlon,
 )
 
@@ -269,6 +272,35 @@ def _draw_zoom_buttons(
     return btn_x, btn_y_plus, btn_y_minus
 
 
+def _draw_tile_status(
+    surface: pygame.Surface,
+    font_sm: pygame.font.Font,
+    rect: tuple[int, int, int, int],
+    tiles_drawn: int,
+) -> None:
+    """Explain a sparse/blank chart: downloading, loading, or offline.
+
+    Stays silent once tiles are on screen and nothing is queued — no point
+    nagging when the chart is fully drawn.
+    """
+    pending = pending_tile_count()
+    if pending > 0:
+        msg = f"downloading tiles… ({pending})"
+    elif tiles_drawn == 0:
+        msg = "no cached tiles — enable [tile] online" if not is_tile_online() else "loading tiles…"
+    else:
+        return
+
+    x, y, w, _h = rect
+    ts = font_sm.render(msg, True, TEXT_WHITE)
+    pad = 6
+    bg = pygame.Surface((ts.get_width() + pad * 2, ts.get_height() + pad), pygame.SRCALPHA)
+    bg.fill((0, 0, 0, 150))
+    bx = x + w // 2 - bg.get_width() // 2
+    surface.blit(bg, (bx, y + 6))
+    surface.blit(ts, (bx + pad, y + 6 + pad // 2))
+
+
 def draw_chart(surface, font, font_sm, state, rect):
     x, y, w, h = rect
     chart_rect = pygame.Rect(x, y, w, h)
@@ -304,16 +336,20 @@ def draw_chart(surface, font, font_sm, state, rect):
 
     surface.set_clip(chart_rect)
 
+    tiles_drawn = 0
     for tx in range(start_tx, end_tx):
         for ty in range(start_ty, end_ty):
             if tx < 0 or ty < 0 or tx >= n or ty >= n:
                 continue
             tile_surf = get_tile(z, tx, ty)
             if tile_surf is None:
+                # Not cached on disk — queue it for the background fetcher.
+                queue_tile_fetch(z, tx, ty)
                 continue
             px = x + pixel_offset_x + (tx - int(center_tile_x)) * TILE_SIZE
             py = y + pixel_offset_y + (ty - int(center_tile_y)) * TILE_SIZE
             surface.blit(tile_surf, (int(px), int(py)))
+            tiles_drawn += 1
 
     surface.set_clip(None)
 
@@ -343,6 +379,8 @@ def draw_chart(surface, font, font_sm, state, rect):
     zoom_text = f"z{z}"
     zt = font_sm.render(zoom_text, True, TEXT_MUTED)
     surface.blit(zt, (x + w - zt.get_width() - 8, y + 6))
+
+    _draw_tile_status(surface, font_sm, rect, tiles_drawn)
 
     _draw_scale_bar(surface, state, rect, font_sm)
 

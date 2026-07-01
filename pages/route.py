@@ -2,7 +2,7 @@ import math
 
 import pygame
 
-from polars.parser import calc_vmc, calc_vmg, compute_true_wind
+from boatpolars.parser import calc_vmc, calc_vmg, compute_true_wind
 from signalk.models import MS_TO_KNOTS, _refresh_route_cache, derive_true_heading, rad_to_deg
 from theme import (
     BG,

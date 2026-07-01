@@ -3,6 +3,13 @@ import time
 
 import pygame
 
+from boatpolars.parser import (
+    calc_vmc,
+    calc_vmg,
+    compute_true_wind,
+    lookup_recommended_sail,
+    lookup_speed,
+)
 from pages.rose import (
     compute_max_speed,
     draw_center_dot,
@@ -12,13 +19,6 @@ from pages.rose import (
     draw_rose_fill,
     draw_speed_rings,
     polar_curve_points,
-)
-from polars.parser import (
-    calc_vmc,
-    calc_vmg,
-    compute_true_wind,
-    lookup_recommended_sail,
-    lookup_speed,
 )
 from signalk.models import (
     MS_TO_KNOTS,

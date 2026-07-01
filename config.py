@@ -32,14 +32,40 @@ SAIL_COLOR_PALETTE = [
 
 
 def _find_config_path() -> str | None:
-    cwd = os.path.join(os.getcwd(), "polarprism.toml")
-    if os.path.exists(cwd):
-        return cwd
+    # Prefer TOML, but also accept the JSON fallback that save_config writes
+    # when tomli_w is unavailable.
     xdg = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    xdg_path = os.path.join(xdg, "polarprism", "polarprism.toml")
-    if os.path.exists(xdg_path):
-        return xdg_path
+    for name in ("polarprism.toml", "polarprism.json"):
+        cwd = os.path.join(os.getcwd(), name)
+        if os.path.exists(cwd):
+            return cwd
+        xdg_path = os.path.join(xdg, "polarprism", name)
+        if os.path.exists(xdg_path):
+            return xdg_path
     return None
+
+
+def _parse_config_file(path: str) -> dict[str, Any]:
+    """Parse a config file, selecting the parser by extension.
+
+    ``.json`` files are read as JSON; everything else is read as TOML (the
+    documented default). Falls back to JSON if TOML support is unavailable
+    (Python < 3.11) so the in-app JSON config still loads. Returns ``{}`` on
+    any read/parse error so a bad config never blocks startup.
+    """
+    is_json = path.lower().endswith(".json")
+    try:
+        if is_json or tomllib is None:
+            with open(path) as f:
+                loaded = json.load(f)
+        else:
+            with open(path, "rb") as f:
+                loaded = tomllib.load(f)
+    except (OSError, ValueError):
+        # ValueError covers json.JSONDecodeError and tomllib.TOMLDecodeError.
+        return {}
+    # A top-level non-mapping (e.g. a bare JSON list) is not a valid config.
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def ws_url_to_rest_url(ws_url: str) -> str:
@@ -119,23 +145,9 @@ def load_config(override_path: str | None = None) -> Config:
 
     data: dict[str, Any] = {}
     if config_path is not None:
-        try:
-            if tomllib is not None:
-                with open(config_path, "rb") as f:
-                    data = tomllib.load(f)
-            else:
-                with open(config_path) as f:
-                    data = json.load(f)
+        data = _parse_config_file(config_path)
+        if os.path.exists(config_path):
             cfg._source_path = config_path
-        except (OSError, json.JSONDecodeError):
-            data = {}
-        except Exception:
-            if tomllib is not None:
-                try:
-                    with open(config_path, "rb") as f:
-                        data = tomllib.load(f)
-                except Exception:
-                    data = {}
 
         sk = data.get("signalk", {})
         if "url" in sk:
@@ -412,15 +424,7 @@ def save_config(config: Config) -> None:
     existing = {}
     path = config._source_path
     if path and os.path.exists(path):
-        try:
-            if tomllib is not None:
-                with open(path, "rb") as f:
-                    existing = tomllib.load(f)
-            else:
-                with open(path) as f:
-                    existing = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
+        existing = _parse_config_file(path)
 
     existing.setdefault("signalk", {})["url"] = config.signalk_url
 

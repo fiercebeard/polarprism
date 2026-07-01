@@ -4,14 +4,14 @@ import json
 import os
 import tempfile
 
-from config import Config, load_config, ws_url_to_rest_url
-from polars.parser import (
+from boatpolars.parser import (
     build_sail_groups,
     build_sail_to_polar,
     compute_polar_display_names,
     discover_saildef,
     discover_sailselect,
 )
+from config import Config, load_config, ws_url_to_rest_url
 
 
 class TestWsUrlToRestUrl:
@@ -59,6 +59,35 @@ class TestConfig:
             assert cfg.chart_lat == 42.0
             assert cfg.chart_lon == -70.5
             assert cfg.chart_zoom == 10
+        finally:
+            os.unlink(path)
+
+    def test_load_config_from_toml_file(self):
+        # Regression: the parser must be chosen by extension, not just by
+        # tomllib availability — a .toml config must parse as TOML.
+        with tempfile.NamedTemporaryFile(
+            suffix=".toml", mode="w", delete=False, encoding="utf-8"
+        ) as f:
+            f.write('[signalk]\nurl = "ws://10.0.0.5:3000/signalk/v1/stream"\n')
+            f.write("[chart]\ndefault_zoom = 11\n")
+            f.flush()
+            path = f.name
+        try:
+            cfg = load_config(path)
+            assert cfg.signalk_url == "ws://10.0.0.5:3000/signalk/v1/stream"
+            assert cfg.chart_zoom == 11
+        finally:
+            os.unlink(path)
+
+    def test_load_config_ignores_non_mapping_json(self):
+        # A top-level JSON list is not a valid config — fall back to defaults.
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
+            json.dump([1, 2, 3], f)
+            f.flush()
+            path = f.name
+        try:
+            cfg = load_config(path)
+            assert cfg.signalk_url == "ws://localhost:3000/signalk/v1/stream"
         finally:
             os.unlink(path)
 

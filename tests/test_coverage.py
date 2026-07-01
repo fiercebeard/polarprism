@@ -4,7 +4,7 @@ import json
 import math
 import os
 
-from polars.coverage import (
+from boatpolars.coverage import (
     TWA_BIN_DEG,
     TWA_MAX_DEG,
     TWA_MIN_DEG,

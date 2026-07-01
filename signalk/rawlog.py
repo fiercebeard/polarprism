@@ -35,7 +35,7 @@ from typing import Any
 
 from nmea2000 import NMEA2000Decoder
 
-from polars.parser import compute_true_wind, discover_polars, lookup_speed
+from boatpolars.parser import compute_true_wind, discover_polars, lookup_speed
 from signalk.models import (
     MS_TO_KNOTS,
     PATH_MAP,

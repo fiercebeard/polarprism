@@ -2,7 +2,7 @@ import math
 
 import pygame
 
-from polars.parser import compute_true_wind
+from boatpolars.parser import compute_true_wind
 from signalk.models import MS_TO_KNOTS, derive_true_heading, rad_to_deg
 from theme import (
     BG,
