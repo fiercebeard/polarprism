@@ -20,6 +20,7 @@ from boatpolars.parser import (
     discover_polars,
     discover_saildef,
     discover_sailselect,
+    list_polar_csvs,
 )
 from config import (
     SAIL_COLOR_PALETTE,
@@ -64,12 +65,10 @@ def _set_default_polar(state: State, config: Config, theoretical_polars: list) -
 def _init_state(polars_dir: str, measured_dir: str, routes_dir: str, config: Config) -> State:
     state = State()
 
-    # Track which CSVs fail to load (Phase 7: Setup checklist feedback)
-    import glob as globmod
-
-    csv_files = (
-        sorted(globmod.glob(os.path.join(polars_dir, "*.csv"))) if os.path.isdir(polars_dir) else []
-    )
+    # Track which CSVs fail to load (Phase 7: Setup checklist feedback).
+    # Uses the same listing as discover_polars so intentionally-skipped
+    # example polars are not reported as load failures.
+    csv_files = list_polar_csvs(polars_dir)
     polars = discover_polars(polars_dir)
     loaded_names = {p.name for p in polars}
     for csv_path in csv_files:

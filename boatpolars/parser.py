@@ -136,11 +136,35 @@ def load_sailselect(filepath: str) -> dict | None:
     return {"tws_list": tws_list, "rows": rows}
 
 
+# Shipped sample polars are prefixed so they can be recognized (and hidden
+# once the user adds their own data).
+EXAMPLE_PREFIX = "example_"
+
+
+def list_polar_csvs(directory: str) -> list[str]:
+    """Return the polar CSV paths that should be loaded from ``directory``.
+
+    The shipped ``example_*`` sample polars only load when they are the *only*
+    polars present — they exist so the app demos out of the box. As soon as
+    the user drops in a real polar CSV, the examples are ignored entirely (no
+    need to delete them).
+    """
+    if not os.path.isdir(directory):
+        return []
+    paths = sorted(globmod.glob(os.path.join(directory, "*.csv")))
+    real = [p for p in paths if not os.path.basename(p).startswith(EXAMPLE_PREFIX)]
+    if real and len(real) < len(paths):
+        logger.info(
+            "Ignoring %d example polar(s) in %s (real polars present)",
+            len(paths) - len(real),
+            directory,
+        )
+    return real if real else paths
+
+
 def discover_polars(directory: str) -> list[PolarData]:
     polars: list[PolarData] = []
-    if not os.path.isdir(directory):
-        return polars
-    for csv_path in sorted(globmod.glob(os.path.join(directory, "*.csv"))):
+    for csv_path in list_polar_csvs(directory):
         p = load_polar(csv_path)
         if p is not None:
             polars.append(p)

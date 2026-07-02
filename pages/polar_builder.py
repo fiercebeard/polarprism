@@ -444,15 +444,23 @@ def _draw_active_group_details(surface, font, font_sm, state, group, px, py, pw)
     name_input.draw(surface, BTN_BG, BTN_BORDER, TEXT_WHITE)
     state._pb_name_rect = (name_rect.x, name_rect.y, name_rect.w, name_rect.h)
     py += NAME_FIELD_H + 4
-    # Polar selector
+    # Polar selector — chips labeled with display names ("Jib", "Asym", …),
+    # not raw filenames, which all truncated to the same "example" text.
     pol_lbl = font_sm.render("Polar:", True, TEXT_LABEL)
     surface.blit(pol_lbl, (px, py + 4))
-    polar_x = px + 60
+    chip_x = px + 60
     for i, pname in enumerate(state.polar_names):
-        rect = pygame.Rect(polar_x + i * 70, py, 64, BTN_H)
+        label = state.polar_display_names.get(pname, pname)
+        chip_w = font_sm.size(label)[0] + 14
+        if chip_x + chip_w > px + pw and chip_x > px + 60:
+            # Wrap to the next row rather than drawing past the panel edge.
+            chip_x = px + 60
+            py += BTN_H + 4
+        rect = pygame.Rect(chip_x, py, chip_w, BTN_H)
         is_active = pname == group.get("polar")
-        _btn(surface, font_sm, rect, pname[:8], is_active)
+        _btn(surface, font_sm, rect, label, is_active)
         state._pb_polar_rects.append((i, rect.x, rect.y, rect.w, rect.h))
+        chip_x += chip_w + 6
     py += BTN_H + 4
     # Delete button
     del_rect = pygame.Rect(px, py, pw, BTN_H)

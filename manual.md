@@ -149,8 +149,9 @@ Polar files are loaded from the `polars/` directory. A sail definition file (`<p
 
 > **Sample data:** the repo ships with example polars for a J/105 (US50 ORC
 > rating) — `example_J105_BestPerf.csv`, `example_J105_Jib.csv`, etc. These let
-> you explore the polar features immediately; overwrite them with your own
-> boat's data. See `polars/README.md`.
+> you explore the polar features immediately. They hide automatically once any
+> non-`example_` polar CSV exists in `polars/`, so just add your own boat's
+> data. See `polars/README.md`.
 
 ## Route Files
 

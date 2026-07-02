@@ -65,7 +65,8 @@ polarprism
 The app also ships with **example polars** for a J/105 (US50 ORC rating) in
 `polars/` (filenames prefixed `example_`) and an **example route** (the Mills
 Trophy course on Lake Erie) in `routes/`. These let you explore every feature
-immediately; overwrite them with your own data. See `polars/README.md` and
+immediately. The example polars **hide automatically** once you add your own
+polar CSV to `polars/` — no need to delete them. See `polars/README.md` and
 `routes/README.md`.
 
 ## Configuration

@@ -20,19 +20,23 @@ your boat's data:
 
 They let you launch PolarPrism and immediately see how the polar diagram, sail
 recommendations, and sail-selection logic behave before you supply your own
-boat's data. **Replace these before relying on the app for real navigation.**
+boat's data.
+
+**The examples hide themselves automatically:** as soon as any non-`example_`
+polar CSV exists in this directory, the `example_*` files are ignored on load.
+You don't have to delete them — but you can, if you want a tidy folder.
 
 ## Using your own boat's polars
 
-1. Delete or overwrite the `example_J105_*` files in this directory.
-2. Add one CSV per sail configuration (e.g. `MyBoat_Jib.csv`,
-   `MyBoat_Asym.csv`). See `manual.md` → "Polar Diagrams" for the CSV format
+1. Add one CSV per sail configuration (e.g. `MyBoat_Jib.csv`,
+   `MyBoat_Asym.csv`). The `example_J105_*` files stop loading automatically.
+   See `manual.md` → "Polar Diagrams" for the CSV format
    (TWA\\TWS header row, semicolon or comma separated).
-3. Optionally add a `<polar_basename>.saildef` file with one `number;Name`
+2. Optionally add a `<polar_basename>.saildef` file with one `number;Name`
    line per sail.
-4. Optionally add a `<polar_basename>.sailselect` matrix for the
+3. Optionally add a `<polar_basename>.sailselect` matrix for the
    "Recommended Sail" feature.
-5. Restart PolarPrism. Auto-discovery picks up the new files — no source
+4. Restart PolarPrism. Auto-discovery picks up the new files — no source
    edits required.
 
 Sail groups, sail-to-polar mapping, sail colors, and a polar-name prefix can

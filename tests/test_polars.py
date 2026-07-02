@@ -356,3 +356,56 @@ class TestCalcVmc:
         result = calc_vmc(polar, 6, 90)
         assert result is not None
         assert result["course_twa"] == 90
+
+
+class TestExamplePolarFiltering:
+    """Shipped example_ polars load only when no real polars exist."""
+
+    CSV = "TWA\\TWS;6;10\n45;4.0;5.0\n90;5.5;7.0\n"
+
+    def _write(self, directory: str, name: str) -> None:
+        import os
+
+        with open(os.path.join(directory, name), "w") as f:
+            f.write(self.CSV)
+
+    def test_examples_load_when_alone(self) -> None:
+        import tempfile
+
+        from boatpolars.parser import discover_polars, list_polar_csvs
+
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "example_J105_Jib.csv")
+            self._write(d, "example_J105_Asym.csv")
+            assert len(list_polar_csvs(d)) == 2
+            names = [p.name for p in discover_polars(d)]
+            assert names == ["example_J105_Asym", "example_J105_Jib"]
+
+    def test_examples_hidden_when_real_polar_present(self) -> None:
+        import tempfile
+
+        from boatpolars.parser import discover_polars, list_polar_csvs
+
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "example_J105_Jib.csv")
+            self._write(d, "example_J105_Asym.csv")
+            self._write(d, "MyBoat_Jib.csv")
+            assert len(list_polar_csvs(d)) == 1
+            names = [p.name for p in discover_polars(d)]
+            assert names == ["MyBoat_Jib"]
+
+    def test_real_only_dir_unaffected(self) -> None:
+        import tempfile
+
+        from boatpolars.parser import discover_polars
+
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "MyBoat_Jib.csv")
+            self._write(d, "MyBoat_Code0.csv")
+            names = [p.name for p in discover_polars(d)]
+            assert names == ["MyBoat_Code0", "MyBoat_Jib"]
+
+    def test_missing_dir_returns_empty(self) -> None:
+        from boatpolars.parser import list_polar_csvs
+
+        assert list_polar_csvs("/nonexistent/polars") == []
