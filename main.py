@@ -195,14 +195,6 @@ def _auto_convert_raw(config: Config) -> None:
         _logger.info("auto-converted %d raw log(s) into %s", len(produced), config.log_dir)
 
 
-def _discover_log_files(log_dir: str) -> list[str]:
-    """Find all .jsonl sailing log files in log_dir, sorted newest first."""
-    if not os.path.isdir(log_dir):
-        return []
-    files = [f for f in os.listdir(log_dir) if f.startswith("sailing_") and f.endswith(".jsonl")]
-    return sorted(files, reverse=True)
-
-
 def _start_replay(state: State, log_path: str) -> None:
     """Helper called from replay hub click handler."""
     session = ReplaySession(log_path, polar_names_map=state.polar_data)

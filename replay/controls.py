@@ -34,11 +34,21 @@ def draw_replay_hub(
     rect: tuple[int, int, int, int],
     log_files: list[str],
     session: ReplaySession | None,
-    on_play: callable | None = None,
+    log_dir: str = "",
 ) -> None:
-    """Draw either the file list or the playing overlay."""
+    """Draw either the file list or the playing overlay.
+
+    Records the clickable rects (Play buttons, Stop button) on ``state`` so
+    :func:`handle_replay_hub_click` hit-tests exactly what was drawn. The
+    layout used to be duplicated in the click handler and drifted — the click
+    rects sat one row above the painted buttons, so Play played the wrong
+    file (or nothing, with a single log).
+    """
     x, y0, w, h = rect
     surface.fill((40, 35, 20), (x, y0, w, h))
+
+    state._replay_play_rects = []
+    state._replay_stop_rect = None
 
     py = y0 + 20
     label = font.render(TITLE, True, REPLAY_COLOR)
@@ -46,15 +56,16 @@ def draw_replay_hub(
     py += label.get_height() + 20
 
     if session is not None:
-        _draw_playing_overlay(surface, font, session, rect)
+        _draw_playing_overlay(surface, font, state, session, rect)
         return
 
-    _draw_file_list(surface, font, state, x, y0, w, h, log_files, py, on_play)
+    _draw_file_list(surface, font, state, x, y0, w, h, log_files, py, log_dir)
 
 
 def _draw_playing_overlay(
     surface: Any,
     font: Any,
+    state: Any,
     session: ReplaySession,
     rect: tuple[int, int, int, int],
 ) -> None:
@@ -102,6 +113,22 @@ def _draw_playing_overlay(
     help_text = "Esc: Stop    Space: Pause    >/<: Speed    R: Reset"
     hl = font.render(help_text, True, TEXT_MUTED)
     surface.blit(hl, (x + FILE_LIST_PAD, py))
+    py += hl.get_height() + 16
+
+    # Explicit Stop button. Previously any click anywhere on the page stopped
+    # the replay, which read as the app breaking back to the file list.
+    stop_rect = pygame.Rect(x + FILE_LIST_PAD, py, BTN_W, BTN_H)
+    pygame.draw.rect(surface, BTN_BG, stop_rect, border_radius=4)
+    pygame.draw.rect(surface, BTN_BORDER, stop_rect, 1, border_radius=4)
+    stop_txt = font.render("Stop Replay", True, TEXT_WHITE)
+    surface.blit(
+        stop_txt,
+        (
+            stop_rect.x + stop_rect.w // 2 - stop_txt.get_width() // 2,
+            stop_rect.y + stop_rect.h // 2 - stop_txt.get_height() // 2,
+        ),
+    )
+    state._replay_stop_rect = stop_rect
 
 
 def _draw_file_list(
@@ -114,10 +141,25 @@ def _draw_file_list(
     h: int,
     log_files: list[str],
     py0: int,
-    on_play: callable | None,
+    log_dir: str,
 ) -> None:
     max_py = y0 + h - 60
     py = py0
+
+    if not log_files:
+        # Tell the user exactly where logs are expected — a recipient of a
+        # shared .jsonl otherwise sees a blank page with no explanation.
+        lines = [
+            "No sailing logs found.",
+            "Put files named sailing_*.jsonl in:",
+            f"  {log_dir}" if log_dir else "  (the configured [paths] log_dir)",
+            "then reopen this page.",
+        ]
+        for line in lines:
+            txt = font.render(line, True, TEXT_MUTED)
+            surface.blit(txt, (x + FILE_LIST_PAD, py))
+            py += txt.get_height() + 8
+        return
 
     for fpath in log_files:
         if py > max_py:
@@ -137,6 +179,7 @@ def _draw_file_list(
         cy = btn.y + btn.h // 2 - play_txt.get_height() // 2
         surface.blit(play_txt, (cx, cy))
 
+        state._replay_play_rects.append((fpath, btn))
         py += FILE_ITEM_H + 8
 
 
@@ -157,21 +200,21 @@ def handle_replay_hub_click(
     session: ReplaySession | None,
     on_play: callable | None = None,
 ) -> str | None:
-    """Handle click on the replay page. Returns event string."""
-    x, y0, w, _h = rect
-    py = y0 + 20
+    """Handle click on the replay page, using the rects recorded at draw time.
 
+    Returns "stop" (Stop button while playing), "playing" (a Play button),
+    or None. Clicks anywhere else are ignored — previously any click during
+    playback stopped the replay.
+    """
     if session is not None:
-        return "stop"
+        stop_rect = getattr(state, "_replay_stop_rect", None)
+        if stop_rect is not None and stop_rect.collidepoint(mx, my):
+            return "stop"
+        return None
 
-    max_py = y0 + rect[3] - 60
-    for fpath in log_files:
-        if py > max_py:
-            break
-        btn = pygame.Rect(x + w // 2 - BTN_W // 2 + 80, py + 2, BTN_W, BTN_H)
-        if btn.collidepoint(mx, my):
+    for fpath, btn in getattr(state, "_replay_play_rects", []):
+        if btn.collidepoint(mx, my) and os.path.exists(fpath):
             if on_play:
                 on_play(fpath)
             return "playing"
-        py += FILE_ITEM_H + 8
     return None
