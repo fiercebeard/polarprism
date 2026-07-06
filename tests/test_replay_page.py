@@ -106,3 +106,80 @@ class TestPlayingOverlay:
                 st, RECT[0] + RECT[2] - 10, RECT[1] + RECT[3] - 10, RECT, d, None
             )
             assert ev is None
+
+
+class TestReplayKeys:
+    """Regression: the speed keys used lowercase K_greater/K_less/K_period/
+    K_comma (nonexistent in pygame), so any key besides Space/Esc during
+    playback raised AttributeError and crashed the app."""
+
+    def _session(self, d: str) -> ReplaySession:
+        return ReplaySession(_write_log(d, "sailing_keys.jsonl"))
+
+    def test_all_playback_keys_work(self):
+        from main import _handle_replay_key
+
+        with tempfile.TemporaryDirectory() as d:
+            s = self._session(d)
+            base = s._speed_index
+            _handle_replay_key(s, pygame.K_GREATER)
+            assert s._speed_index == base + 1
+            _handle_replay_key(s, pygame.K_PERIOD)
+            assert s._speed_index == base + 2
+            _handle_replay_key(s, pygame.K_LESS)
+            _handle_replay_key(s, pygame.K_COMMA)
+            assert s._speed_index == base
+            _handle_replay_key(s, pygame.K_SPACE)
+            assert s.is_paused
+            _handle_replay_key(s, pygame.K_r)
+            assert not s.is_paused
+
+    def test_unbound_keys_are_ignored(self):
+        from main import _handle_replay_key
+
+        with tempfile.TemporaryDirectory() as d:
+            s = self._session(d)
+            for key in (pygame.K_a, pygame.K_F1, pygame.K_TAB, pygame.K_1):
+                _handle_replay_key(s, key)  # must not raise
+
+
+class TestReplayDoesNotRecord:
+    """Regression: replay set sailing_log_active and sailing_state='sailing',
+    which satisfied the recorder's condition — playing a log re-recorded it
+    into a brand-new sailing_*.jsonl file."""
+
+    def test_recording_blocked_during_replay(self):
+        from signalk.client import should_write_sailing_log
+
+        st = State()
+        st.sailing_log_active = True
+        st.sailing_state = "sailing"
+        assert should_write_sailing_log(st) is True  # live recording works
+        st.replay_active = True
+        assert should_write_sailing_log(st) is False  # replay never records
+
+    def test_not_sailing_blocks_recording(self):
+        from signalk.client import should_write_sailing_log
+
+        st = State()
+        st.sailing_log_active = True
+        st.sailing_state = "motoring"
+        assert should_write_sailing_log(st) is False
+
+
+def test_all_pygame_key_constants_exist():
+    """Every pygame.K_* referenced anywhere in the source must actually exist —
+    a typo'd constant only explodes at runtime, on the exact keypress."""
+    import pathlib
+    import re
+
+    pat = re.compile(r"pygame\.(K_\w+)")
+    root = pathlib.Path(__file__).resolve().parents[1]
+    missing = []
+    for py in root.rglob("*.py"):
+        if any(part in (".git", "polarprism.egg-info") for part in py.parts):
+            continue
+        for name in set(pat.findall(py.read_text(encoding="utf-8", errors="ignore"))):
+            if not hasattr(pygame, name):
+                missing.append(f"{py.relative_to(root)}: pygame.{name}")
+    assert missing == [], f"nonexistent pygame key constants referenced: {missing}"

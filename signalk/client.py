@@ -236,6 +236,20 @@ async def logger(state):
         state.last_log_time = now.timestamp()
 
 
+def should_write_sailing_log(state) -> bool:
+    """Whether the sailing performance log should record right now.
+
+    Replay feeds logged values back into ``state`` (including
+    ``sailing_state == "sailing"`` and ``sailing_log_active`` for the Polar
+    Builder live feed), which satisfies the normal recording condition —
+    without the replay guard, playing a log re-records it into a brand-new
+    ``sailing_*.jsonl`` file.
+    """
+    if getattr(state, "replay_active", False):
+        return False
+    return bool(state.sailing_log_active) and state.sailing_state == "sailing"
+
+
 async def performance_logger(state):
     os.makedirs(_perf_log_dir, exist_ok=True)
     PERF_LOG_INTERVAL = 1.0
@@ -243,7 +257,7 @@ async def performance_logger(state):
     while True:
         await _sleep(PERF_LOG_INTERVAL)
 
-        if not state.sailing_log_active or state.sailing_state != "sailing":
+        if not should_write_sailing_log(state):
             continue
 
         now = datetime.now(timezone.utc)
@@ -311,7 +325,9 @@ async def performance_logger(state):
 
 
 async def write_log_event(state, event_type, data=None):
-    if not state.sailing_log_active:
+    # The replay guard also protects a leftover performance_log_file from an
+    # earlier real recording — replay events must never append to it.
+    if getattr(state, "replay_active", False) or not state.sailing_log_active:
         return
     now = datetime.now(timezone.utc)
     entry = {"ts": now.isoformat(), "event": event_type}

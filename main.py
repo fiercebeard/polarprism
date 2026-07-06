@@ -195,6 +195,24 @@ def _auto_convert_raw(config: Config) -> None:
         _logger.info("auto-converted %d raw log(s) into %s", len(produced), config.log_dir)
 
 
+def _handle_replay_key(session: ReplaySession, key: int) -> None:
+    """Playback controls while a replay session is active.
+
+    Uses pygame's uppercase key constants — the old inline version referenced
+    lowercase ``K_greater``/``K_less``/``K_period``/``K_comma``, which don't
+    exist in pygame, so any key besides Space/Esc during playback raised
+    AttributeError and crashed the app.
+    """
+    if key == pygame.K_SPACE:
+        session.toggle_pause()
+    elif key in (pygame.K_GREATER, pygame.K_PERIOD):
+        session.speed_up()
+    elif key in (pygame.K_LESS, pygame.K_COMMA):
+        session.speed_down()
+    elif key == pygame.K_r:
+        session.reset()
+
+
 def _start_replay(state: State, log_path: str) -> None:
     """Helper called from replay hub click handler."""
     session = ReplaySession(log_path, polar_names_map=state.polar_data)
@@ -479,14 +497,7 @@ async def main() -> None:
 
                 # Replay playback controls
                 if session is not None:
-                    if event.key == pygame.K_SPACE:
-                        session.toggle_pause()
-                    elif event.key == pygame.K_greater or event.key == pygame.K_period:
-                        session.speed_up()
-                    elif event.key == pygame.K_less or event.key == pygame.K_comma:
-                        session.speed_down()
-                    elif event.key == pygame.K_r:
-                        session.reset()
+                    _handle_replay_key(session, event.key)
                     continue
 
                 if state.active_nav == "navigation":
