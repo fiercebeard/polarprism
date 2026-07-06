@@ -271,6 +271,16 @@ def _draw_wind_pointers(surface, font_sm, state, cx, cy, r):
         p_in = angle_to_screen(cx, cy, r - 6, tdeg)
         p_out = angle_to_screen(cx, cy, r + 6, tdeg)
         pygame.draw.line(surface, WIND_TRUE, p_in, p_out, 3)
+        # 'T' tag, matching the 'A'. Downwind AWA and TWA converge, so nudge
+        # the T outward when the two labels would sit on top of each other.
+        t_radius = r + 28
+        if awa_rad is not None:
+            gap = abs(((tdeg - signed_wind_deg(awa_rad)) + 180.0) % 360.0 - 180.0)
+            if gap < 10.0:
+                t_radius = r + 44
+        lbl_t = font_sm.render("T", True, WIND_TRUE)
+        tx, ty = angle_to_screen(cx, cy, t_radius, tdeg)
+        surface.blit(lbl_t, (int(tx - lbl_t.get_width() / 2), int(ty - lbl_t.get_height() / 2)))
 
     if awa_rad is None:
         return

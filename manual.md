@@ -77,8 +77,8 @@ A polar rose diagram showing theoretical boat speed at various wind angles for t
 
 Live wind is drawn on the rose rim: an amber inward-pointing arrow (tagged
 "A") marks the apparent wind angle — the wind you steer and trim to — and a
-blue tick marks the true wind angle, which is the frame the polar curves live
-in. The side panel shows the matching AWA/AWS numbers.
+blue tick (tagged "T") marks the true wind angle, which is the frame the
+polar curves live in. The side panel shows the matching AWA/AWS numbers.
 
 - Click on the polar diagram to select TWS, or press `W`/`S` (or `↑`/`↓`)
 - Click the TWS buttons in the panel to select TWS

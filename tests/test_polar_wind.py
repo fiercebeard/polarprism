@@ -86,3 +86,27 @@ class TestWindPointers:
         surf = pygame.Surface((1400, 900))
         draw_polar_rose(surf, _FONT, _FONT_SM, st, RECT)  # must not raise
         assert surf.get_at(_awa_shaft_midpoint())[:3] != WIND_APPARENT
+
+    def test_true_tick_drawn_at_computed_twa(self):
+        from boatpolars.parser import compute_true_wind
+        from pages.polar import signed_wind_deg
+        from theme import WIND_TRUE
+
+        st = _make_state(with_wind=True)
+        twa_rad, _ = compute_true_wind(
+            st.values["windAngleApparent"],
+            st.values["windSpeedApparent"],
+            st.values["speedThroughWater"],
+        )
+        tdeg = signed_wind_deg(twa_rad)
+
+        surf = pygame.Surface((1400, 900))
+        draw_polar_rose(surf, _FONT, _FONT_SM, st, RECT)
+
+        x, y, w, h = RECT
+        chart_w = int(w * 0.60)
+        cx = x + chart_w // 2
+        cy = y + h // 2
+        r = min(chart_w, h) // 2 - 20
+        px, py = angle_to_screen(cx, cy, r + 3, tdeg)  # tick spans r-6..r+6
+        assert surf.get_at((int(px), int(py)))[:3] == WIND_TRUE
