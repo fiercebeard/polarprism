@@ -11,6 +11,7 @@ from boatpolars.parser import (
     lookup_speed,
 )
 from pages.rose import (
+    angle_to_screen,
     compute_max_speed,
     draw_center_dot,
     draw_curve_lines,
@@ -46,6 +47,8 @@ from theme import (
     TEXT_WHITE,
     TWS_COLORS,
     WARN,
+    WIND_APPARENT,
+    WIND_TRUE,
     WP_ACTION,
     WP_ADJUST,
     WP_HOLD,
@@ -232,6 +235,60 @@ def _draw_rec_box(surface, font_sm, x, y, w, line1, line2, color):
     return REC_OVERLAY_HEIGHT
 
 
+def signed_wind_deg(rad: float) -> float:
+    """Radians -> degrees normalized to [-180, 180) (starboard positive)."""
+    deg = math.degrees(rad)
+    return ((deg + 180.0) % 360.0) - 180.0
+
+
+def format_awa(awa_deg: float) -> str:
+    """Helm-style side-tagged wind angle: '34°S', '120°P', '0°'."""
+    if awa_deg > 0:
+        side = "S"
+    elif awa_deg < 0:
+        side = "P"
+    else:
+        side = ""
+    return f"{abs(round(awa_deg)):.0f}°{side}"
+
+
+def _draw_wind_pointers(surface, font_sm, state, cx, cy, r):
+    """Rim pointers for apparent (amber arrow + 'A') and true (blue tick) wind.
+
+    The rose shares the boat-relative convention (bow up, starboard right),
+    so AWA/TWA map straight onto it. Apparent wind is what the helm steers
+    and trims to, so it gets the prominent inward-pointing arrow — the
+    masthead-display convention; the true-wind tick ties it to the polar
+    curves, which live in TWA space.
+    """
+    awa_rad = state.values.get("windAngleApparent")
+    aws_ms = state.values.get("windSpeedApparent")
+    stw_ms = state.values.get("speedThroughWater")
+    twa_rad, _tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
+
+    if twa_rad is not None:
+        tdeg = signed_wind_deg(twa_rad)
+        p_in = angle_to_screen(cx, cy, r - 6, tdeg)
+        p_out = angle_to_screen(cx, cy, r + 6, tdeg)
+        pygame.draw.line(surface, WIND_TRUE, p_in, p_out, 3)
+
+    if awa_rad is None:
+        return
+    adeg = signed_wind_deg(awa_rad)
+    tip = angle_to_screen(cx, cy, r - 12, adeg)
+    tail = angle_to_screen(cx, cy, r + 10, adeg)
+    pygame.draw.line(surface, WIND_APPARENT, tail, tip, 3)
+    # Inward arrowhead: wings splay back outward from the tip.
+    a = math.radians(adeg) - math.pi / 2
+    wing1 = (tip[0] + math.cos(a + 0.45) * 10, tip[1] + math.sin(a + 0.45) * 10)
+    wing2 = (tip[0] + math.cos(a - 0.45) * 10, tip[1] + math.sin(a - 0.45) * 10)
+    pygame.draw.polygon(surface, WIND_APPARENT, [tip, wing1, wing2])
+    # 'A' tag outside the radial labels (which sit at r + 14).
+    lbl = font_sm.render("A", True, WIND_APPARENT)
+    lx, ly = angle_to_screen(cx, cy, r + 28, adeg)
+    surface.blit(lbl, (int(lx - lbl.get_width() / 2), int(ly - lbl.get_height() / 2)))
+
+
 def draw_polar_rose(surface, font, font_sm, state, rect):
     x, y, w, h = rect
     polar = state.polar_data.get(state.polar_active)
@@ -394,6 +451,8 @@ def draw_polar_rose(surface, font, font_sm, state, rect):
                         vy = cy + math.sin(va_rad) * vmg_r
                         pygame.draw.circle(surface, WP_VMG_DOT, (int(vx), int(vy)), 3)
 
+    _draw_wind_pointers(surface, font_sm, state, cx, cy, r)
+
     draw_center_dot(surface, cx, cy, 3)
 
     _draw_rec_overlay(surface, font_sm, state, polar, x, y, chart_w, h)
@@ -460,6 +519,15 @@ def _draw_polar_panel(surface, font, font_sm, state, rect, chart_w, polar):
     ol = font_sm.render(overlay_text, True, overlay_color)
     surface.blit(ol, (px, py + 2))
     py += 20
+
+    py += 4
+    heading("--- Wind ---")
+    awa_rad = state.values.get("windAngleApparent")
+    aws_ms = state.values.get("windSpeedApparent")
+    awa_str = format_awa(signed_wind_deg(awa_rad)) if awa_rad is not None else "---°"
+    aws_str = f"{aws_ms * MS_TO_KNOTS:.1f} kts" if aws_ms is not None else "--- kts"
+    row("AWA:", awa_str, WIND_APPARENT)
+    row("AWS:", aws_str, WIND_APPARENT)
 
     py += 4
     heading("--- Wind Speed (TWS) ---")
