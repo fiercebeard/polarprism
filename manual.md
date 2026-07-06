@@ -107,6 +107,32 @@ Displays route waypoints, leg bearings, distances, and computed VMC (velocity ma
 
 Routes are loaded from `.gpx` files placed in the `routes/` directory.
 
+### Replay (⏵)
+
+Plays back a recorded sailing log so you can review a session — the boat,
+wind, and polar pages all animate from the logged data as if you were sailing
+it live.
+
+The page lists every log found in the sailing-logs directory
+(`sailing_logs/` next to the app, or `[paths] log_dir` in
+`polarprism.toml`). **Files must be named `sailing_*.jsonl`** — the name
+PolarPrism gives them when recording. Click **Play** next to a log to start.
+If someone sends you a log file, drop it into that directory and reopen the
+page; if the list is empty, the page shows the exact folder it's looking in.
+
+| Action | Control |
+|---|---|
+| Start playback | Click **Play** next to a file |
+| Stop playback | **Stop Replay** button or `Esc` |
+| Pause / resume | `Space` |
+| Speed up / down | `>` / `<` (1x–20x) |
+| Restart from beginning | `R` |
+| Scrub timeline | Mouse wheel |
+
+While a replay is running, a status bar at the bottom of the screen shows
+play state, the current log time, speed, and progress — visible on every
+page, so you can watch the Sailing or Navigation pages during playback.
+
 ### Diagnostics (📊)
 
 Two tabs:

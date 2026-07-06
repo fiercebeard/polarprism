@@ -18,7 +18,7 @@ def draw_replay_page(
     """Draw the replay file list page."""
     log_files = _discover_log_files(log_dir)
     session = getattr(state, "_replay_session", None)
-    draw_replay_hub(surface, font, state, rect, log_files, session)
+    draw_replay_hub(surface, font, state, rect, log_files, session, log_dir=log_dir)
 
 
 def handle_replay_page_click(
