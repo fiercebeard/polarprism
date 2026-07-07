@@ -102,6 +102,9 @@ class State:
         self.perf_averages: dict[int, float] = {}
         self.PERF_WINDOWS: list[int] = [60, 300, 600, 1800]
         self.nmea_log: deque[str] = deque(maxlen=500)
+        # Rolling history for the Trends page: one dict per second, one hour
+        # deep (see signalk.client.trend_sampler).
+        self.trend_samples: deque[dict[str, Any]] = deque(maxlen=3600)
 
         # Replay state (mutually exclusive with live)
         self.replay_active: bool = False
@@ -183,6 +186,28 @@ def angle_diff(a: float, b: float) -> float:
 
 def derive_true_heading(state: State) -> float | None:
     return derive_true_heading_from_values(state.values, state.heading_offset)
+
+
+def waypoint_bearing_rad(state: State) -> float | None:
+    """Bearing to the next waypoint (radians true), route first, Signal K second.
+
+    Prefers the active route's cached leg bearing, then falls back through
+    the server-computed course paths in the same priority order the polar
+    page uses.
+    """
+    if state.route_active and state.route_next_wp_bearing_rad is not None:
+        return state.route_next_wp_bearing_rad
+    for key in (
+        "calcBearingTrue",
+        "nextPointBearingTrue",
+        "gcNextPointBearingTrue",
+        "courseBearingTrue",
+        "courseRhumblineBearingTrue",
+    ):
+        v = state.values.get(key)
+        if v is not None:
+            return float(v)
+    return None
 
 
 def derive_true_heading_from_values(values: dict[str, Any], heading_offset: float) -> float | None:

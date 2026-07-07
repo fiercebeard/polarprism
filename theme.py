@@ -127,6 +127,7 @@ NAV_ITEMS = [
     ("navigation", "\u2693"),  # \u2693 anchor
     ("heading", "\u2197"),  # \u2197 heading arrow
     ("sailing", "\u26f5"),  # \u26f5 sailboat
+    ("trends", "\u2248"),  # \u2248 waves (strip charts)
     ("builder", "\u22bf"),  # \u22bf set-square (Polar Builder)
     ("replay", "\u23f5"),  # \u23f5 play
     ("diagnostics", "\u25a6"),  # \u25a6 data grid
@@ -137,6 +138,7 @@ NAV_ITEM_LABELS = {
     "navigation": "Navigation",
     "heading": "Heading",
     "sailing": "Sailing",
+    "trends": "Trends",
     "builder": "Polar Builder",
     "replay": "Replay",
     "diagnostics": "Diagnostics",
@@ -147,6 +149,7 @@ NAV_TABS = {
     "navigation": ["Chart"],
     "heading": ["Compass", "Headings"],
     "sailing": ["Polars", "Wind", "Log", "Route"],
+    "trends": ["5 min", "15 min", "30 min", "60 min"],
     "builder": ["Builder"],
     "replay": [],
     "diagnostics": ["Values", "NMEA Log"],

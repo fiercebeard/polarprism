@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import time
 import urllib.request
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ import aiofiles
 import websockets
 
 from boatpolars.coverage import bin_sample
-from boatpolars.parser import auto_select_tws_index, compute_true_wind, lookup_speed
+from boatpolars.parser import auto_select_tws_index, calc_vmc, compute_true_wind, lookup_speed
 
 from .models import (
     MS_TO_KNOTS,
@@ -20,6 +21,7 @@ from .models import (
     rad_to_deg,
     rad_to_deg_signed,
     update_from_delta,
+    waypoint_bearing_rad,
 )
 
 LOG_INTERVAL = 1.0
@@ -415,3 +417,90 @@ async def polar_builder_sampler(state):
         if binned is None:
             continue
         state.polar_builder_live_buffer.append(binned)
+
+
+TREND_SAMPLE_INTERVAL = 1.0
+
+
+def build_trend_sample(state, now: float | None = None) -> dict:
+    """One row of Trends-page history from the current live values.
+
+    Returns a dict keyed by series name; every value except ``t`` may be
+    None when its inputs aren't available, and the page draws a gap. When
+    disconnected (and not replaying) only ``t`` is set, so stale values
+    show as a gap instead of a false flatline.
+    """
+    t = now if now is not None else time.time()
+    sample: dict = {"t": t}
+    if not state.connected:
+        return sample
+
+    def kts(ms):
+        return ms * MS_TO_KNOTS if ms is not None else None
+
+    awa_rad = state.values.get("windAngleApparent")
+    aws_ms = state.values.get("windSpeedApparent")
+    stw_ms = state.values.get("speedThroughWater")
+    sog_ms = state.values.get("speedOverGround")
+    cog_rad = state.values.get("cogTrue")
+    twa_rad, tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
+    ht_rad = derive_true_heading(state)
+    btw_rad = waypoint_bearing_rad(state)
+
+    sample["tws"] = kts(tws_ms)
+    sample["stw"] = kts(stw_ms)
+    sample["sog"] = kts(sog_ms)
+    sample["awa"] = rad_to_deg_signed(awa_rad) if awa_rad is not None else None
+    sample["twa"] = rad_to_deg_signed(twa_rad) if twa_rad is not None else None
+    sample["hdg"] = rad_to_deg(ht_rad) if ht_rad is not None else None
+    sample["cog"] = rad_to_deg(cog_rad) if cog_rad is not None else None
+    sample["btw"] = rad_to_deg(btw_rad) if btw_rad is not None else None
+
+    twd = None
+    if sample["hdg"] is not None and sample["twa"] is not None:
+        twd = (sample["hdg"] + sample["twa"]) % 360.0
+    sample["twd"] = twd
+
+    # Actual VMC toward the waypoint (ground-referenced).
+    vmc = None
+    if sog_ms is not None and cog_rad is not None and btw_rad is not None:
+        vmc = kts(sog_ms) * math.cos(btw_rad - cog_rad)
+    sample["vmc"] = vmc
+
+    # Polar-derived series: performance %, target VMC/TWA, %VMC.
+    polar = state.polar_data.get(state.polar_active)
+    tws_kts = sample["tws"]
+    perf = None
+    if polar is not None and sample["twa"] is not None and tws_kts is not None:
+        target = lookup_speed(polar, abs(sample["twa"]), tws_kts)
+        if target is not None and target > 0 and sample["stw"] is not None:
+            perf = sample["stw"] / target * 100.0
+    sample["perf"] = perf
+
+    wp_angle = tgt_vmc = tgt_twa = vmc_pct = None
+    if sample["btw"] is not None and twd is not None:
+        wp_angle = ((sample["btw"] - twd + 180.0) % 360.0) - 180.0
+        if polar is not None and tws_kts is not None:
+            vd = calc_vmc(polar, tws_kts, wp_angle)
+            if vd is not None:
+                tgt_vmc = vd["best_vmc"]
+                if vd["best_twa"] is not None:
+                    tgt_twa = abs(vd["best_twa"])
+                if vmc is not None and tgt_vmc is not None and tgt_vmc > 0:
+                    vmc_pct = vmc / tgt_vmc * 100.0
+    sample["wp_angle"] = wp_angle
+    sample["tgt_vmc"] = tgt_vmc
+    sample["tgt_twa"] = tgt_twa
+    sample["vmc_pct"] = vmc_pct
+    return sample
+
+
+async def trend_sampler(state):
+    """1 Hz history feed for the Trends page (one hour rolling window).
+
+    Runs during replay too — replay marks state.connected and pushes logged
+    values into state, so the trends redraw the replayed session as it plays.
+    """
+    while True:
+        await _sleep(TREND_SAMPLE_INTERVAL)
+        state.trend_samples.append(build_trend_sample(state))
