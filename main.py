@@ -31,7 +31,7 @@ from config import (
     ws_url_to_rest_url,
 )
 from logging_config import setup_logging
-from pages import diagnostics, heading, navigation, polar_builder, sailing, settings
+from pages import diagnostics, heading, navigation, polar_builder, sailing, settings, trend
 from pages import replay as replay_page
 from replay.engine import ReplaySession
 from routes.parser import discover_routes
@@ -45,6 +45,7 @@ from signalk.client import (
     polar_builder_sampler,
     set_asyncio_sleep,
     set_log_paths,
+    trend_sampler,
     write_log_event,
     ws_reader,
 )
@@ -180,6 +181,7 @@ def _spawn_tasks(state: State, config: Config) -> list:
         asyncio.ensure_future(performance_logger(state)),
         asyncio.ensure_future(perf_sampler(state)),
         asyncio.ensure_future(polar_builder_sampler(state)),
+        asyncio.ensure_future(trend_sampler(state)),
         asyncio.ensure_future(tile_fetcher()),
     ]
 
@@ -336,6 +338,8 @@ def _render_frame(
             heading.render(screen, font, font_sm, state, content_rect, state.active_tab)
         elif state.active_nav == "sailing":
             sailing.render(screen, font, font_sm, state, content_rect, state.active_tab)
+        elif state.active_nav == "trends":
+            trend.draw_trend_page(screen, font, font_sm, state, content_rect, state.active_tab)
         elif state.active_nav == "builder":
             polar_builder.render(
                 screen, font, font_sm, state, content_rect, state.active_tab, config=config
