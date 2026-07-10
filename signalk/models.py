@@ -22,6 +22,10 @@ DRIFT_CALC_MIN_SOG_KTS = 0.1
 HEADING_OFFSET_INCREMENT_DEG = 0.5
 VARIATION_DELTA_WARN_DEG = 0.5
 
+# Signals eligible for low-pass filtering (GPS motion-artifact suppression).
+# Keys match the state.values keys used throughout the app.
+FILTERABLE_SIGNALS = ["cogTrue", "speedOverGround"]
+
 PATH_MAP = {
     "headingMagnetic": "navigation.headingMagnetic",
     "headingTrue": "navigation.headingTrue",
@@ -161,6 +165,11 @@ class State:
         self._pb_combine_rect: tuple[int, int, int, int] | None = None
         self._pb_build_status: str = ""
 
+        # GPS motion-artifact filtering. ``filter_manager`` is created in
+        # main._init_state from the [filter] config; ``filtered`` is a
+        # convenience accessor dict updated alongside state.values.
+        self.filter_manager: Any | None = None
+
 
 def rad_to_deg(rad: float | None) -> float | None:
     if rad is None:
@@ -236,6 +245,9 @@ def update_from_delta(state: State, msg: str) -> None:
     ts = datetime.now(UTC).strftime("%H:%M:%S")
     state.nmea_log.append(f"{ts} {msg.strip()[:200]}")
 
+    # Low-pass filter manager (GPS motion-artifact suppression).
+    fm = getattr(state, "filter_manager", None)
+
     if data.get("vessels"):
         for vessel in data["vessels"].values():
             nav = vessel.get("navigation", {})
@@ -307,6 +319,14 @@ def update_from_delta(state: State, msg: str) -> None:
                     _logged_unknown_paths.add(path)
                     _log_unknown_path(path, val)
 
+    # Update low-pass filters for COG/SOG if filtering is configured.
+    if fm is not None:
+        dt = 1.0  # Signal K stream is ~1 Hz; time-aware filter handles it
+        for sig in FILTERABLE_SIGNALS:
+            v = state.values.get(sig)
+            if v is not None and isinstance(v, (int, float)):
+                fm.update(sig, float(v), dt)
+
 
 _logged_unknown_paths: set[str] = set()
 
@@ -356,6 +376,21 @@ def polar_sail_mismatch(state: State) -> str | None:
     active_desc = ", ".join(state.active_sails)
     polar_desc = ", ".join(polar_sails)
     return f"polar [{polar_desc}] != sail [{active_desc}]"
+
+
+def filtered_value(state: State, signal: str) -> float | None:
+    """Return the filtered value for a filterable signal, else the raw value.
+
+    Pages and computations call this instead of ``state.values.get(signal)``
+    for COG/SOG so they automatically use the low-pass-filtered value when
+    filtering is enabled and fall back to raw otherwise.
+    """
+    raw = state.values.get(signal)
+    fm = getattr(state, "filter_manager", None)
+    if fm is None:
+        return raw
+    result: float | None = fm.get(signal, raw)
+    return result
 
 
 def _refresh_route_cache(state: State, vmc_kts: float | None = None) -> None:

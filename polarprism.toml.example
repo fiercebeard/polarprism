@@ -100,3 +100,20 @@ default_zoom = 9
 # min_samples = 3
 # min_stw_kts = 2.0
 # min_aws_kts = 4.0
+
+# GPS motion-artifact filtering. The GPS antenna on a mast-mounted boat
+# picks up mast sway/roll at the wave frequency (~0.25 Hz, 4 s period),
+# which shows up as noise on COG and SOG. A one-pole IIR low-pass filter
+# at 0.05 Hz (20 s period) suppresses the artifact while keeping real
+# ground-track change. Group delay is ~3 s — well under a 20 s horizon.
+#
+# Suggestions are generated automatically on the Settings -> Filters tab:
+# pick a sailing log, click Analyze, and accept the recommended cutoffs.
+# Pages that consume COG/SOG prefer the filtered values when filtering
+# is enabled and fall back to raw values otherwise.
+#
+# [filter]
+# enabled = false
+# [filter.cutoffs]
+# cogTrue = 0.05
+# speedOverGround = 0.05

@@ -152,6 +152,15 @@ def _init_state(polars_dir: str, measured_dir: str, routes_dir: str, config: Con
     state.chart_center_lon = config.chart_lon
     state.chart_zoom = config.chart_zoom
 
+    # Build the GPS motion-artifact filter from the [filter] config section.
+    from signalk.filters import FilterConfig, FilterManager
+
+    filter_cfg = FilterConfig(
+        enabled=config.filter_enabled,
+        cutoffs=dict(config.filter_cutoffs),
+    )
+    state.filter_manager = FilterManager(filter_cfg)
+
     return state
 
 

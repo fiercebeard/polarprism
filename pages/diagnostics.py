@@ -15,6 +15,7 @@ from signalk.models import (
     VARIATION_DELTA_WARN_DEG,
     State,
     angle_diff,
+    filtered_value,
     norm_angle,
     rad_to_deg,
     rad_to_deg_signed,
@@ -103,8 +104,8 @@ def draw_values(surface, font, font_sm, state, rect):
 
     hm = state.values.get("headingMagnetic")
     mv = state.values.get("magneticVariation")
-    cog = state.values.get("cogTrue")
-    sog = state.values.get("speedOverGround")
+    cog = filtered_value(state, "cogTrue")
+    sog = filtered_value(state, "speedOverGround")
     stw = state.values.get("speedThroughWater")
     ap_target = state.values.get("apTargetMagnetic")
 

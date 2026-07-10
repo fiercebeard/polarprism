@@ -18,6 +18,7 @@ from boatpolars.parser import auto_select_tws_index, calc_vmc, compute_true_wind
 from .models import (
     MS_TO_KNOTS,
     derive_true_heading,
+    filtered_value,
     rad_to_deg,
     rad_to_deg_signed,
     update_from_delta,
@@ -204,7 +205,7 @@ async def logger(state):
             "magneticVariation",
             "rateOfTurn",
         ]:
-            v = state.values.get(key)
+            v = filtered_value(state, key) if key == "cogTrue" else state.values.get(key)
             if v is not None:
                 if key == "magneticVariation":
                     deg = rad_to_deg_signed(v)
@@ -267,8 +268,8 @@ async def performance_logger(state):
         awa_rad = state.values.get("windAngleApparent")
         aws_ms = state.values.get("windSpeedApparent")
         stw_ms = state.values.get("speedThroughWater")
-        sog_ms = state.values.get("speedOverGround")
-        cog_rad = state.values.get("cogTrue")
+        sog_ms = filtered_value(state, "speedOverGround")
+        cog_rad = filtered_value(state, "cogTrue")
         twa_rad, tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
         twa_deg = math.degrees(twa_rad) if twa_rad is not None else None
         tws_kts = tws_ms * MS_TO_KNOTS if tws_ms is not None else None
@@ -441,8 +442,8 @@ def build_trend_sample(state, now: float | None = None) -> dict:
     awa_rad = state.values.get("windAngleApparent")
     aws_ms = state.values.get("windSpeedApparent")
     stw_ms = state.values.get("speedThroughWater")
-    sog_ms = state.values.get("speedOverGround")
-    cog_rad = state.values.get("cogTrue")
+    sog_ms = filtered_value(state, "speedOverGround")
+    cog_rad = filtered_value(state, "cogTrue")
     twa_rad, tws_ms = compute_true_wind(awa_rad, aws_ms, stw_ms)
     ht_rad = derive_true_heading(state)
     btw_rad = waypoint_bearing_rad(state)

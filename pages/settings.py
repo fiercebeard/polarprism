@@ -1,15 +1,18 @@
 import logging
+import os
 
 import pygame
 
 from config import SETUP_CHECKLIST, save_config
 from pages.ui import TextInput, draw_heading, draw_row
+from signalk.filters import DEFAULT_CUTOFF_HZ, FILTERABLE_SIGNALS, analyze_log
 from theme import (
     BG,
     BTN_ACTIVE_BG,
     BTN_ACTIVE_BORDER,
     BTN_BG,
     BTN_BORDER,
+    CALC,
     CONNECTED,
     DISCONNECTED,
     IDLE_COLOR,
@@ -20,6 +23,7 @@ from theme import (
     SETUP_ROW_H,
     TEXT_DIM,
     TEXT_MUTED,
+    TEXT_VALUE,
     TEXT_WHITE,
     WARN,
 )
@@ -410,6 +414,8 @@ def render(surface, font, font_sm, state, rect, sub_tab, config=None):
             )
             ry += ROW_H
 
+    elif sub_tab == 3:
+        _draw_filters_tab(surface, font, font_sm, state, rect, config)
     else:
         _draw_setup_tab(surface, font, font_sm, state, rect, config)
 
@@ -506,6 +512,310 @@ def _draw_sails_tab(surface, font, font_sm, state, rect, config):
         ry += ROW_H
 
 
+# --- Filters tab -----------------------------------------------------------
+
+FILTER_FILE_ROW_H = 20
+FILTER_SUGGEST_ROW_H = 22
+FILTER_BTN_H = 28
+
+
+def _list_sailing_logs(log_dir: str) -> list[str]:
+    """Return sorted list of sailing-log JSONL basenames in log_dir."""
+    try:
+        names = sorted(f for f in os.listdir(log_dir) if f.endswith(".jsonl"))
+    except OSError:
+        return []
+    return names
+
+
+def _draw_filters_tab(surface, font, font_sm, state, rect, config):
+    """GPS motion-artifact filter settings: analyze, suggest, enable."""
+    x, y, _w, _h = rect
+    ry = y + 20
+    ry += 4
+    draw_heading(surface, font_sm, x + 20, ry, "--- GPS Signal Filters ---")
+    ry += ROW_H
+
+    enabled = bool(config.filter_enabled)
+    draw_row(
+        surface,
+        font_sm,
+        x,
+        ry,
+        "Filtering:",
+        "ENABLED" if enabled else "DISABLED",
+        label_x=x + 20,
+        value_x=x + 200,
+        color=OK if enabled else IDLE_COLOR,
+    )
+    ry += ROW_H
+
+    toggle_rect = pygame.Rect(x + 200, ry, 120, BTN_H)
+    bg = BTN_ACTIVE_BG if enabled else BTN_BG
+    border = BTN_ACTIVE_BORDER if enabled else BTN_BORDER
+    pygame.draw.rect(surface, bg, toggle_rect, border_radius=4)
+    pygame.draw.rect(surface, border, toggle_rect, 1, border_radius=4)
+    tt = font_sm.render("ON" if enabled else "OFF", True, TEXT_WHITE)
+    surface.blit(
+        tt,
+        (
+            toggle_rect.x + toggle_rect.w // 2 - tt.get_width() // 2,
+            toggle_rect.y + toggle_rect.h // 2 - tt.get_height() // 2,
+        ),
+    )
+    state._filter_toggle_rect = toggle_rect
+    ry += BTN_H + 4
+
+    hint = font_sm.render(
+        "Low-pass filters COG/SOG to suppress mast-sway motion artifacts.",
+        True,
+        TEXT_DIM,
+    )
+    surface.blit(hint, (x + 20, ry))
+    ry += ROW_H
+
+    # --- Sailing log file picker ---
+    ry += 4
+    draw_heading(surface, font_sm, x + 20, ry, "--- Sailing Log ---")
+    ry += ROW_H
+
+    log_dir = config.log_dir if config else ""
+    files = _list_sailing_logs(log_dir)
+    selected_idx = getattr(state, "_filter_log_idx", 0)
+    if not files:
+        ts = font_sm.render("(no sailing logs found — record one first)", True, TEXT_DIM)
+        surface.blit(ts, (x + 20, ry))
+        ry += FILTER_FILE_ROW_H
+    else:
+        if selected_idx >= len(files):
+            selected_idx = 0
+        show_count = min(len(files), 6)
+        start = max(0, selected_idx - show_count // 2)
+        end = min(len(files), start + show_count)
+        start = max(0, end - show_count)
+        file_rects = []
+        for i in range(start, end):
+            fname = files[i]
+            is_sel = i == selected_idx
+            row_rect = pygame.Rect(x + 20, ry, 380, FILTER_FILE_ROW_H)
+            color = BTN_ACTIVE_BG if is_sel else BG
+            pygame.draw.rect(surface, color, row_rect, border_radius=3)
+            pygame.draw.rect(surface, BTN_BORDER, row_rect, 1, border_radius=3)
+            fname_color = TEXT_WHITE if is_sel else TEXT_MUTED
+            ts = font_sm.render(fname, True, fname_color)
+            surface.blit(ts, (row_rect.x + 8, ry + 2))
+            file_rects.append((i, row_rect))
+            ry += FILTER_FILE_ROW_H
+        state._filter_file_rects = file_rects
+        state._filter_files = files
+
+        nav_hint = font_sm.render("click to select; Analyze runs the spectral scan", True, TEXT_DIM)
+        surface.blit(nav_hint, (x + 20, ry))
+        ry += FILTER_FILE_ROW_H
+
+    # Analyze button
+    analyze_rect = pygame.Rect(x + 20, ry, 140, FILTER_BTN_H)
+    pygame.draw.rect(surface, BTN_ACTIVE_BG, analyze_rect, border_radius=4)
+    pygame.draw.rect(surface, BTN_ACTIVE_BORDER, analyze_rect, 1, border_radius=4)
+    at = font_sm.render("Analyze", True, TEXT_WHITE)
+    surface.blit(
+        at,
+        (
+            analyze_rect.x + analyze_rect.w // 2 - at.get_width() // 2,
+            analyze_rect.y + analyze_rect.h // 2 - at.get_height() // 2,
+        ),
+    )
+    state._filter_analyze_rect = analyze_rect
+    ry += FILTER_BTN_H + 4
+
+    # Analyze status / error
+    status = getattr(state, "_filter_analyze_status", "")
+    if status:
+        color = WARN if status.startswith("Error") else CALC
+        ts = font_sm.render(status, True, color)
+        surface.blit(ts, (x + 20, ry))
+        ry += ROW_H
+
+    # --- Suggestions ---
+    suggestions = getattr(state, "_filter_suggestions", [])
+    if suggestions:
+        ry += 4
+        draw_heading(surface, font_sm, x + 20, ry, "--- Suggested Filters ---")
+        ry += ROW_H
+
+        accept_rects = []
+        for i, s in enumerate(suggestions):
+            signal = s.get("signal", "")
+            cutoff = s.get("cutoff_hz", DEFAULT_CUTOFF_HZ)
+            artifact = s.get("artifact_hz")
+            power_db = s.get("artifact_power_db")
+            baseline_db = s.get("baseline_power_db")
+
+            sig_label = "COG" if signal == "cogTrue" else "SOG"
+            line = f"{sig_label}: cutoff {cutoff:.3f} Hz"
+            if artifact and power_db is not None and baseline_db is not None:
+                line += f"  | artifact {artifact:.3f} Hz ({power_db - baseline_db:+.1f} dB)"
+            ts = font_sm.render(line, True, TEXT_VALUE)
+            surface.blit(ts, (x + 20, ry))
+            ry += FILTER_SUGGEST_ROW_H - 2
+
+            reason = s.get("reason", "")
+            ts = font_sm.render(reason, True, TEXT_DIM)
+            surface.blit(ts, (x + 40, ry))
+            ry += FILTER_SUGGEST_ROW_H - 2
+
+            accept_rect = pygame.Rect(x + 460, ry - FILTER_SUGGEST_ROW_H + 2, 90, BTN_H)
+            pygame.draw.rect(surface, BTN_BG, accept_rect, border_radius=3)
+            pygame.draw.rect(surface, BTN_BORDER, accept_rect, 1, border_radius=3)
+            act = font_sm.render("Accept", True, TEXT_WHITE)
+            surface.blit(
+                act,
+                (
+                    accept_rect.x + accept_rect.w // 2 - act.get_width() // 2,
+                    accept_rect.y + accept_rect.h // 2 - act.get_height() // 2,
+                ),
+            )
+            accept_rects.append((i, accept_rect))
+            ry += 4
+
+        state._filter_accept_rects = accept_rects
+
+        # Save button
+        save_rect = pygame.Rect(x + 20, ry, 240, FILTER_BTN_H)
+        pygame.draw.rect(surface, BTN_ACTIVE_BG, save_rect, border_radius=4)
+        pygame.draw.rect(surface, BTN_ACTIVE_BORDER, save_rect, 1, border_radius=4)
+        st = font_sm.render("Save Filters to TOML", True, TEXT_WHITE)
+        surface.blit(
+            st,
+            (
+                save_rect.x + 12,
+                save_rect.y + (save_rect.h - st.get_height()) // 2,
+            ),
+        )
+        state._filter_save_rect = save_rect
+        ry += FILTER_BTN_H + 4
+    else:
+        state._filter_accept_rects = []
+
+    save_status = getattr(state, "_filter_save_status", "")
+    if save_status:
+        color = OK if save_status.startswith("Saved") else WARN
+        ts = font_sm.render(save_status, True, color)
+        surface.blit(ts, (x + 20, ry))
+        ry += ROW_H
+
+    # Show current active cutoffs
+    ry += 4
+    draw_heading(surface, font_sm, x + 20, ry, "--- Active Cutoffs ---")
+    ry += ROW_H
+    for sig in FILTERABLE_SIGNALS:
+        sig_label = "COG" if sig == "cogTrue" else "SOG"
+        cutoff = config.filter_cutoffs.get(sig, DEFAULT_CUTOFF_HZ)
+        draw_row(
+            surface,
+            font_sm,
+            x,
+            ry,
+            f"{sig_label}:",
+            f"{cutoff:.3f} Hz ({1.0 / cutoff:.0f}s period)" if cutoff > 0 else "off",
+            label_x=x + 20,
+            value_x=x + 200,
+        )
+        ry += ROW_H
+
+
+def _handle_filters_click(state, mx, my, config):
+    """Handle clicks on the Filters tab."""
+    # Toggle enable/disable
+    toggle_rect = getattr(state, "_filter_toggle_rect", None)
+    if toggle_rect and toggle_rect.collidepoint(mx, my):
+        config.filter_enabled = not config.filter_enabled
+        fm = getattr(state, "filter_manager", None)
+        if fm is not None:
+            fm.config.enabled = config.filter_enabled
+            if not config.filter_enabled:
+                fm.reset()
+        _save_filters(state, config)
+        return
+
+    # File picker
+    file_rects = getattr(state, "_filter_file_rects", [])
+    for idx, rect in file_rects:
+        if rect.collidepoint(mx, my):
+            state._filter_log_idx = idx
+            return
+
+    # Analyze button
+    analyze_rect = getattr(state, "_filter_analyze_rect", None)
+    if analyze_rect and analyze_rect.collidepoint(mx, my):
+        _run_filter_analysis(state, config)
+        return
+
+    # Accept suggestion buttons
+    accept_rects = getattr(state, "_filter_accept_rects", [])
+    for i, rect in accept_rects:
+        if rect.collidepoint(mx, my):
+            suggestions = getattr(state, "_filter_suggestions", [])
+            if i < len(suggestions):
+                s = suggestions[i]
+                signal = s.get("signal", "")
+                cutoff = s.get("cutoff_hz", DEFAULT_CUTOFF_HZ)
+                if signal:
+                    config.filter_cutoffs[signal] = cutoff
+                    fm = getattr(state, "filter_manager", None)
+                    if fm is not None:
+                        fm.config.cutoffs[signal] = cutoff
+                        f = fm._filters.get(signal)
+                        if f is not None:
+                            f.set_cutoff(cutoff)
+                            f.reset()
+            return
+
+    # Save button
+    save_rect = getattr(state, "_filter_save_rect", None)
+    if save_rect and save_rect.collidepoint(mx, my):
+        _save_filters(state, config)
+        return
+
+
+def _run_filter_analysis(state, config):
+    """Run spectral analysis on the selected sailing log."""
+    files = getattr(state, "_filter_files", [])
+    idx = getattr(state, "_filter_log_idx", 0)
+    if not files or idx >= len(files):
+        state._filter_analyze_status = "Error: no sailing log selected"
+        return
+    log_dir = config.log_dir if config else ""
+    path = os.path.join(log_dir, files[idx])
+    if not os.path.exists(path):
+        state._filter_analyze_status = f"Error: file not found: {files[idx]}"
+        return
+    state._filter_analyze_status = "Analyzing..."
+    try:
+        suggestions = analyze_log(path)
+        state._filter_suggestions = [s.to_dict() for s in suggestions]
+        if not suggestions:
+            state._filter_analyze_status = "No analyzable signals (need >= 2 min of data)"
+        else:
+            state._filter_analyze_status = f"Found {len(suggestions)} suggestion(s)"
+    except Exception as exc:
+        _logger.warning("filter analysis failed: %s", exc, exc_info=True)
+        state._filter_analyze_status = f"Error: {exc}"
+        state._filter_suggestions = []
+
+
+def _save_filters(state, config):
+    """Persist filter config to polarprism.toml."""
+    if config is None:
+        return
+    try:
+        save_config(config)
+        state._filter_save_status = "Saved to " + (config._source_path or "polarprism.toml")
+    except Exception as exc:
+        _logger.warning("could not write filter config: %s", exc, exc_info=True)
+        state._filter_save_status = f"Save failed: {exc}"
+
+
 def handle_click(state, mx, my, rect, sub_tab, config=None):
     if sub_tab == 0:
         url_input = getattr(state, "_sk_url_input", None)
@@ -539,6 +849,8 @@ def handle_click(state, mx, my, rect, sub_tab, config=None):
             state.heading_offset += 0.5
             return None
     elif sub_tab == 3:
+        _handle_filters_click(state, mx, my, config)
+    elif sub_tab == 4:
         section_rects = getattr(state, "_setup_section_rects", None)
         if section_rects:
             expanded = getattr(state, "_setup_expanded", set())

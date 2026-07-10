@@ -3,7 +3,7 @@ import math
 import pygame
 
 from boatpolars.parser import compute_true_wind
-from signalk.models import MS_TO_KNOTS, derive_true_heading, rad_to_deg
+from signalk.models import MS_TO_KNOTS, derive_true_heading, filtered_value, rad_to_deg
 from theme import (
     BG,
     POLAR_FILL,
@@ -57,8 +57,8 @@ def draw_wind(surface, font, font_sm, state, rect):
     if hm_rad is not None:
         mv = mv_rad or 0
         heading_rad = hm_rad + mv
-    elif state.values.get("cogTrue") is not None:
-        heading_rad = state.values["cogTrue"]
+    elif filtered_value(state, "cogTrue") is not None:
+        heading_rad = filtered_value(state, "cogTrue")
 
     if heading_rad is not None and twa_rad is not None:
         twd_rad = heading_rad + twa_rad

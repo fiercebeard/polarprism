@@ -15,6 +15,7 @@ from signalk.models import (
     MS_TO_KNOTS,
     angle_diff,
     derive_true_heading,
+    filtered_value,
     norm_angle,
     rad_to_deg,
     rad_to_deg_signed,
@@ -83,7 +84,12 @@ def draw_compass(surface, font, font_sm, state, rect):
     angle_keys = ["headingMagnetic", "headingTrue", "cogTrue", "apTargetMagnetic"]
 
     for key in angle_keys:
-        val = derive_true_heading(state) if key == "headingTrue" else state.values.get(key)
+        if key == "headingTrue":
+            val = derive_true_heading(state)
+        elif key in ("cogTrue", "speedOverGround"):
+            val = filtered_value(state, key)
+        else:
+            val = state.values.get(key)
         if val is None:
             continue
         color = SIGNAL_COLORS[key]
@@ -131,8 +137,8 @@ def draw_compass(surface, font, font_sm, state, rect):
 
     hm = state.values.get("headingMagnetic")
     ht = derive_true_heading(state)
-    cog = state.values.get("cogTrue")
-    sog = state.values.get("speedOverGround")
+    cog = filtered_value(state, "cogTrue")
+    sog = filtered_value(state, "speedOverGround")
     stw = state.values.get("speedThroughWater")
     mv = state.values.get("magneticVariation")
 
@@ -175,8 +181,8 @@ def draw_headings(surface, font, font_sm, state, rect):
 
     hm = state.values.get("headingMagnetic")
     ht = derive_true_heading(state)
-    cog = state.values.get("cogTrue")
-    sog = state.values.get("speedOverGround")
+    cog = filtered_value(state, "cogTrue")
+    sog = filtered_value(state, "speedOverGround")
     stw = state.values.get("speedThroughWater")
     mv = state.values.get("magneticVariation")
     rot = state.values.get("rateOfTurn")

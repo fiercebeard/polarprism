@@ -119,6 +119,10 @@ class Config:
     coverage_min_samples: int = 3
     coverage_min_stw_kts: float = 2.0
     coverage_min_aws_kts: float = 4.0
+    # GPS motion-artifact filtering (low-pass on COG/SOG). See [filter] in
+    # polarprism.toml.example. Cutoffs in Hz; 0.05 Hz = 20 s period.
+    filter_enabled: bool = False
+    filter_cutoffs: dict[str, float] = field(default_factory=dict)
     _source_path: str | None = None
 
     def __post_init__(self) -> None:
@@ -251,6 +255,15 @@ def load_config(override_path: str | None = None) -> Config:
             cfg.coverage_min_stw_kts = float(coverage_cfg["min_stw_kts"])
         if "min_aws_kts" in coverage_cfg:
             cfg.coverage_min_aws_kts = float(coverage_cfg["min_aws_kts"])
+
+        filter_cfg = data.get("filter", {})
+        if "enabled" in filter_cfg:
+            cfg.filter_enabled = bool(filter_cfg["enabled"])
+        cutoffs_raw = filter_cfg.get("cutoffs", {})
+        if isinstance(cutoffs_raw, dict):
+            cfg.filter_cutoffs = {
+                k: float(v) for k, v in cutoffs_raw.items() if isinstance(v, (int, float))
+            }
 
     cfg.__post_init__()
     return cfg
@@ -468,6 +481,12 @@ def save_config(config: Config) -> None:
     coverage_section["min_samples"] = config.coverage_min_samples
     coverage_section["min_stw_kts"] = config.coverage_min_stw_kts
     coverage_section["min_aws_kts"] = config.coverage_min_aws_kts
+
+    # Persist [filter] section
+    filter_section = existing.setdefault("filter", {})
+    filter_section["enabled"] = config.filter_enabled
+    if config.filter_cutoffs:
+        filter_section["cutoffs"] = dict(config.filter_cutoffs)
 
     if not path:
         path = os.path.join(os.getcwd(), "polarprism.toml")
