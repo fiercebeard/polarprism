@@ -651,6 +651,7 @@ def _draw_filters_tab(surface, font, font_sm, state, rect, config):
             power_db = s.get("artifact_power_db")
             baseline_db = s.get("baseline_power_db")
 
+            row_y = ry
             sig_label = "COG" if signal == "cogTrue" else "SOG"
             line = f"{sig_label}: cutoff {cutoff:.3f} Hz"
             if artifact and power_db is not None and baseline_db is not None:
@@ -664,7 +665,7 @@ def _draw_filters_tab(surface, font, font_sm, state, rect, config):
             surface.blit(ts, (x + 40, ry))
             ry += FILTER_SUGGEST_ROW_H - 2
 
-            accept_rect = pygame.Rect(x + 460, ry - FILTER_SUGGEST_ROW_H + 2, 90, BTN_H)
+            accept_rect = pygame.Rect(x + 460, row_y, 90, BTN_H)
             pygame.draw.rect(surface, BTN_BG, accept_rect, border_radius=3)
             pygame.draw.rect(surface, BTN_BORDER, accept_rect, 1, border_radius=3)
             act = font_sm.render("Accept", True, TEXT_WHITE)
