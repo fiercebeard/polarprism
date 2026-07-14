@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import math
+import time
 
 from signalk.models import (
     MS_TO_KNOTS,
+    STALE_VALUE_AGE_SEC,
     State,
     angle_diff,
+    calc_age,
     derive_true_heading,
+    is_calc_stale,
+    is_stale,
     norm_angle,
     rad_to_deg,
     rad_to_deg_signed,
+    signal_age,
     toggle_sail,
+    update_from_delta,
 )
 
 
@@ -257,3 +264,122 @@ def test_toggle_sail_remove_does_not_switch_polar():
     assert state.polar_active == "Jib"
     toggle_sail(state, "Jib")
     assert state.polar_active == "Jib"
+
+
+def test_update_from_delta_updates_form_sets_last_update():
+    state = State()
+    msg = (
+        '{"updates":[{"$source":"src1","timestamp":"2024-01-01T00:00:00Z",'
+        '"values":[{"path":"navigation.headingMagnetic","value":1.2}]}]}'
+    )
+    before = time.time()
+    update_from_delta(state, msg)
+    after = time.time()
+    assert "headingMagnetic" in state.values
+    t = state.last_update.get("headingMagnetic")
+    assert t is not None
+    assert before <= t <= after
+
+
+def test_update_from_delta_vessels_form_sets_last_update():
+    state = State()
+    msg = '{"vessels":{"self":{"navigation":{"headingMagnetic":{"value":0.9,"$source":"src2"}}}}}'
+    before = time.time()
+    update_from_delta(state, msg)
+    after = time.time()
+    assert state.values.get("headingMagnetic") == 0.9
+    t = state.last_update.get("headingMagnetic")
+    assert t is not None
+    assert before <= t <= after
+
+
+def test_update_from_delta_skips_null_value_no_last_update():
+    state = State()
+    msg = (
+        '{"updates":[{"$source":"src1","timestamp":"2024-01-01T00:00:00Z",'
+        '"values":[{"path":"navigation.headingMagnetic","value":null}]}]}'
+    )
+    update_from_delta(state, msg)
+    assert "headingMagnetic" not in state.last_update
+
+
+def test_signal_age_none_when_never_received():
+    state = State()
+    assert signal_age(state, "headingMagnetic") is None
+
+
+def test_signal_age_returns_seconds_since_update():
+    state = State()
+    now = 1000.0
+    state.last_update["headingMagnetic"] = 990.0
+    age = signal_age(state, "headingMagnetic", now=now)
+    assert age == 10.0
+
+
+def test_signal_age_uses_time_time_by_default():
+    state = State()
+    before = time.time()
+    state.last_update["headingMagnetic"] = before
+    age = signal_age(state, "headingMagnetic")
+    assert age is not None
+    assert 0.0 <= age < 1.0
+
+
+def test_is_stale_false_when_never_received():
+    state = State()
+    assert is_stale(state, "headingMagnetic") is False
+
+
+def test_is_stale_false_when_fresh():
+    state = State()
+    state.last_update["headingMagnetic"] = time.time() - 5.0
+    assert is_stale(state, "headingMagnetic") is False
+
+
+def test_is_stale_true_past_threshold():
+    state = State()
+    state.last_update["headingMagnetic"] = time.time() - (STALE_VALUE_AGE_SEC + 5.0)
+    assert is_stale(state, "headingMagnetic") is True
+
+
+def test_is_stale_custom_threshold():
+    state = State()
+    state.last_update["headingMagnetic"] = time.time() - 15.0
+    assert is_stale(state, "headingMagnetic", threshold=10.0) is True
+    assert is_stale(state, "headingMagnetic", threshold=20.0) is False
+
+
+def test_calc_age_none_when_no_inputs_received():
+    state = State()
+    age, latest = calc_age(state, ["headingMagnetic", "cogTrue"])
+    assert age is None
+    assert latest is None
+
+
+def test_calc_age_returns_freshest_input():
+    state = State()
+    now = 1000.0
+    state.last_update["headingMagnetic"] = 980.0
+    state.last_update["cogTrue"] = 995.0
+    age, latest = calc_age(state, ["headingMagnetic", "cogTrue"], now=now)
+    assert age == 5.0
+    assert latest == 995.0
+
+
+def test_is_calc_stale_true_when_all_inputs_stale():
+    state = State()
+    state.last_update["headingMagnetic"] = time.time() - (STALE_VALUE_AGE_SEC + 10.0)
+    state.last_update["cogTrue"] = time.time() - (STALE_VALUE_AGE_SEC + 5.0)
+    assert is_calc_stale(state, ["headingMagnetic", "cogTrue"]) is True
+
+
+def test_is_calc_stale_false_when_any_input_fresh():
+    state = State()
+    state.last_update["headingMagnetic"] = time.time() - (STALE_VALUE_AGE_SEC + 10.0)
+    state.last_update["cogTrue"] = time.time() - 5.0
+    assert is_calc_stale(state, ["headingMagnetic", "cogTrue"]) is False
+
+
+def test_is_calc_stale_true_when_no_inputs_received():
+    state = State()
+    assert is_calc_stale(state, ["headingMagnetic", "cogTrue"]) is True

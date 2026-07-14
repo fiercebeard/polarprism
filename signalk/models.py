@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,7 @@ CURRENT_LEEWAY_MIN_STW_KTS = 0.5
 DRIFT_CALC_MIN_SOG_KTS = 0.1
 HEADING_OFFSET_INCREMENT_DEG = 0.5
 VARIATION_DELTA_WARN_DEG = 0.5
+STALE_VALUE_AGE_SEC = 60.0
 
 # Signals eligible for low-pass filtering (GPS motion-artifact suppression).
 # Keys match the state.values keys used throughout the app.
@@ -65,6 +67,7 @@ class State:
         self.values: dict[str, Any] = {}
         self.sources: dict[str, str] = {}
         self.timestamps: dict[str, str] = {}
+        self.last_update: dict[str, float] = {}
         self.position: dict[str, float | None] = {"lat": None, "lon": None}
         self.vessel_name = ""
         self.last_log_time: float = 0.0
@@ -266,6 +269,7 @@ def update_from_delta(state: State, msg: str) -> None:
                     leaf = obj[leaf_key]
                     if "value" in leaf and leaf["value"] is not None:
                         state.values[key] = leaf["value"]
+                        state.last_update[key] = time.time()
                         src = leaf.get("$source")
                         if src:
                             state.sources[key] = src
@@ -303,6 +307,7 @@ def update_from_delta(state: State, msg: str) -> None:
                         state.values[key] = val
                         state.sources[key] = source_label
                         state.timestamps[key] = timestamp
+                        state.last_update[key] = time.time()
                         break
                 if path == "navigation.position" and isinstance(val, dict):
                     if val.get("latitude") is not None:
@@ -391,6 +396,62 @@ def filtered_value(state: State, signal: str) -> float | None:
         return raw
     result: float | None = fm.get(signal, raw)
     return result
+
+
+def signal_age(state: State, key: str, now: float | None = None) -> float | None:
+    """Seconds since ``key`` was last updated, or None if never received.
+
+    ``now`` defaults to :func:`time.time`; pass an explicit value for tests.
+    """
+    t = state.last_update.get(key)
+    if t is None:
+        return None
+    return (now if now is not None else time.time()) - t
+
+
+def is_stale(
+    state: State, key: str, now: float | None = None, threshold: float = STALE_VALUE_AGE_SEC
+) -> bool:
+    """True if ``key`` was last updated more than ``threshold`` seconds ago.
+
+    A signal that has never been received is *not* stale by this definition —
+    callers should treat ``signal_age(...) is None`` separately when they want
+    to distinguish "never seen" from "seen but expired".
+    """
+    age = signal_age(state, key, now)
+    if age is None:
+        return False
+    return age > threshold
+
+
+def calc_age(
+    state: State, keys: list[str], now: float | None = None
+) -> tuple[float | None, float | None]:
+    """Freshest (age, timestamp) across ``keys`` for a derived/CALC row.
+
+    Returns ``(None, None)`` when no input has ever been received, so callers
+    can hide the row. The freshest input is the one with the smallest age
+    (largest ``last_update`` timestamp).
+    """
+    stamps = [t for k in keys if (t := state.last_update.get(k)) is not None]
+    if not stamps:
+        return None, None
+    latest = max(stamps)
+    age = (now if now is not None else time.time()) - latest
+    return age, latest
+
+
+def is_calc_stale(
+    state: State,
+    keys: list[str],
+    now: float | None = None,
+    threshold: float = STALE_VALUE_AGE_SEC,
+) -> bool:
+    """True if every input in ``keys`` is stale (or never received)."""
+    age, _ = calc_age(state, keys, now)
+    if age is None:
+        return True
+    return age > threshold
 
 
 def _refresh_route_cache(state: State, vmc_kts: float | None = None) -> None:
