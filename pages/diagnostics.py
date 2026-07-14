@@ -95,10 +95,11 @@ def _draw_signal_row(
     signal_key: str,
     src_color: tuple,
     show_detail: bool,
+    stale_age: float = STALE_VALUE_AGE_SEC,
 ) -> bool:
     """Draw one sourced-signal row with last-updated time. False if hidden."""
     age = state.last_update.get(signal_key)
-    if age is None or time.time() - age > STALE_VALUE_AGE_SEC:
+    if age is None or time.time() - age > stale_age:
         return False
     src = state.sources.get(signal_key, "")
     dev = state.device_names.get(src, src) if src else ""
@@ -154,7 +155,7 @@ def _calc_time_str(state: State, keys: list[str]) -> str:
     return _format_last_update(latest)
 
 
-def draw_values(surface, font, font_sm, state, rect):
+def draw_values(surface, font, font_sm, state, rect, stale_age: float = STALE_VALUE_AGE_SEC):
     x, y0, w, h = rect
     surface.fill(BG, (x, y0, w, h))
 
@@ -177,15 +178,25 @@ def draw_values(surface, font, font_sm, state, rect):
                 continue
             show_src = fmt_type != "wind_combined" and not fmt_type.endswith("_opt")
             if _draw_signal_row(
-                surface, font_sm, x, y, label, value_str, state, signal_key, src_color, show_src
+                surface,
+                font_sm,
+                x,
+                y,
+                label,
+                value_str,
+                state,
+                signal_key,
+                src_color,
+                show_src,
+                stale_age,
             ):
                 y += ROW_H
 
     y = _draw_heading_error_block(
-        surface, font_sm, state, x, y, dim_color, val_color, warn_color, calc_color
+        surface, font_sm, state, x, y, dim_color, val_color, warn_color, calc_color, stale_age
     )
-    y = _draw_mag_cog_block(surface, font_sm, state, x, y, dim_color, calc_color)
-    y = _draw_ap_block(surface, font_sm, state, x, y, dim_color)
+    y = _draw_mag_cog_block(surface, font_sm, state, x, y, dim_color, calc_color, stale_age)
+    y = _draw_ap_block(surface, font_sm, state, x, y, dim_color, stale_age)
 
     y += 4
     draw_heading(surface, font_sm, x + 4, y, "--- Variation Sources ---")
@@ -252,7 +263,7 @@ def draw_values(surface, font, font_sm, state, rect):
 
 
 def _draw_heading_error_block(
-    surface, font_sm, state, x, y, dim_color, val_color, warn_color, calc_color
+    surface, font_sm, state, x, y, dim_color, val_color, warn_color, calc_color, stale_age
 ):
     """Draw the CALC: Heading Error section. Returns updated y."""
     hm = state.values.get("headingMagnetic")
@@ -263,7 +274,7 @@ def _draw_heading_error_block(
 
     hdg_inputs = ["headingMagnetic", "magneticVariation", "cogTrue"]
     hdg_age, _ = calc_age(state, hdg_inputs)
-    if hdg_age is None or hdg_age > STALE_VALUE_AGE_SEC:
+    if hdg_age is None or hdg_age > stale_age:
         return y
 
     derived_ht = None
@@ -335,7 +346,7 @@ def _draw_heading_error_block(
 
     current_inputs = ["headingMagnetic", "cogTrue", "speedOverGround", "speedThroughWater"]
     cur_age, _ = calc_age(state, current_inputs)
-    if cur_age is not None and cur_age <= STALE_VALUE_AGE_SEC:
+    if cur_age is not None and cur_age <= stale_age:
         if sog_kts > CURRENT_LEEWAY_MIN_SOG_KTS and stw_kts > CURRENT_LEEWAY_MIN_STW_KTS:
             y = _draw_current_drift_leeway(
                 surface, font_sm, x, y, hdg_err, sog_kts, stw_kts, current_inputs, dim_color, state
@@ -424,7 +435,7 @@ def _draw_current_drift_leeway(
     return y
 
 
-def _draw_mag_cog_block(surface, font_sm, state, x, y, dim_color, calc_color):
+def _draw_mag_cog_block(surface, font_sm, state, x, y, dim_color, calc_color, stale_age):
     """Draw the CALC: Mag-COG row. Returns updated y."""
     hm = state.values.get("headingMagnetic")
     cog = filtered_value(state, "cogTrue")
@@ -432,7 +443,7 @@ def _draw_mag_cog_block(surface, font_sm, state, x, y, dim_color, calc_color):
         return y
     inputs = ["headingMagnetic", "cogTrue"]
     age, _ = calc_age(state, inputs)
-    if age is None or age > STALE_VALUE_AGE_SEC:
+    if age is None or age > stale_age:
         return y
     mag_cog = math.degrees(angle_diff(hm, cog))
     mag_time = _calc_time_str(state, inputs)
@@ -455,7 +466,7 @@ def _draw_mag_cog_block(surface, font_sm, state, x, y, dim_color, calc_color):
     return y
 
 
-def _draw_ap_block(surface, font_sm, state, x, y, dim_color):
+def _draw_ap_block(surface, font_sm, state, x, y, dim_color, stale_age):
     """Draw the CALC: AP off-hdg row. Returns updated y."""
     hm = state.values.get("headingMagnetic")
     mv = state.values.get("magneticVariation")
@@ -464,7 +475,7 @@ def _draw_ap_block(surface, font_sm, state, x, y, dim_color):
         return y
     inputs = ["headingMagnetic", "magneticVariation", "apTargetMagnetic"]
     age, _ = calc_age(state, inputs)
-    if age is None or age > STALE_VALUE_AGE_SEC:
+    if age is None or age > stale_age:
         return y
     derived_ht = norm_angle(hm + mv + math.radians(state.heading_offset))
     ap_true = norm_angle(ap_target + mv)
@@ -516,9 +527,10 @@ def draw_nmea_log(surface, font, font_sm, state, rect):
             break
 
 
-def render(surface, font, font_sm, state, rect, sub_tab):
+def render(surface, font, font_sm, state, rect, sub_tab, config=None):
     if sub_tab == 0:
-        draw_values(surface, font, font_sm, state, rect)
+        stale_age = config.stale_value_age_sec if config else STALE_VALUE_AGE_SEC
+        draw_values(surface, font, font_sm, state, rect, stale_age)
     elif sub_tab == 1:
         draw_nmea_log(surface, font, font_sm, state, rect)
 

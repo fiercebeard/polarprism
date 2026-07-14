@@ -356,7 +356,9 @@ def _render_frame(
         elif state.active_nav == "replay":
             _render_replay_page(screen, font, font_sm, state, content_rect, config)
         elif state.active_nav == "diagnostics":
-            diagnostics.render(screen, font, font_sm, state, content_rect, state.active_tab)
+            diagnostics.render(
+                screen, font, font_sm, state, content_rect, state.active_tab, config=config
+            )
         elif state.active_nav == "settings":
             settings.render(
                 screen, font, font_sm, state, content_rect, state.active_tab, config=config

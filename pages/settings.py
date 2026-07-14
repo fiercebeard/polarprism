@@ -109,6 +109,24 @@ def clock_dt_ms(state) -> int:
     return _last_frame_ms(state)
 
 
+def _adjust_stale_age(config, delta: float) -> None:
+    """Adjust the Diagnostics stale-value timeout by ``delta`` seconds and persist."""
+    if config is None:
+        return
+    new_age = config.stale_value_age_sec + delta
+    if new_age < 0:
+        new_age = 0
+    if new_age > 600:
+        new_age = 600
+    config.stale_value_age_sec = new_age
+    try:
+        save_config(config)
+    except Exception:
+        _logger.warning(
+            "could not write polarprism.toml; stale-age change is session-only", exc_info=True
+        )
+
+
 def _draw_setup_tab(surface, font, font_sm, state, rect, config):
     x, y0, w, h = rect
     surface.fill(BG, (x, y0, w, h))
@@ -317,6 +335,56 @@ def render(surface, font, font_sm, state, rect, sub_tab, config=None):
 
         key_hint = font_sm.render("or [\u200b / ] keys", True, TEXT_DIM)
         surface.blit(key_hint, (x + 284, ry + 4))
+        ry += ROW_H
+
+        ry += 12
+        draw_heading(surface, font_sm, x + 20, ry, "--- Diagnostics ---")
+        ry += ROW_H
+
+        stale_age = config.stale_value_age_sec if config else 60.0
+        draw_row(
+            surface,
+            font_sm,
+            x,
+            ry,
+            "Stale Value Timeout:",
+            f"{stale_age:.0f} s",
+            label_x=x + 20,
+            value_x=x + 200,
+            detail="0 = always show",
+            detail_x=x + 260,
+            detail_color=TEXT_DIM,
+        )
+        ry += ROW_H
+
+        stale_minus_rect = pygame.Rect(x + 200, ry, BTN_W, BTN_H)
+        pygame.draw.rect(surface, BTN_BG, stale_minus_rect, border_radius=3)
+        pygame.draw.rect(surface, BTN_BORDER, stale_minus_rect, 1, border_radius=3)
+        mt = font_sm.render("-", True, TEXT_WHITE)
+        surface.blit(
+            mt,
+            (
+                stale_minus_rect.x + BTN_W // 2 - mt.get_width() // 2,
+                stale_minus_rect.y + BTN_H // 2 - mt.get_height() // 2,
+            ),
+        )
+        state._stale_minus_rect = stale_minus_rect
+
+        stale_plus_rect = pygame.Rect(x + 240, ry, BTN_W, BTN_H)
+        pygame.draw.rect(surface, BTN_BG, stale_plus_rect, border_radius=3)
+        pygame.draw.rect(surface, BTN_BORDER, stale_plus_rect, 1, border_radius=3)
+        pt = font_sm.render("+", True, TEXT_WHITE)
+        surface.blit(
+            pt,
+            (
+                stale_plus_rect.x + BTN_W // 2 - pt.get_width() // 2,
+                stale_plus_rect.y + BTN_H // 2 - pt.get_height() // 2,
+            ),
+        )
+        state._stale_plus_rect = stale_plus_rect
+
+        stale_hint = font_sm.render("-5 / +5 seconds", True, TEXT_DIM)
+        surface.blit(stale_hint, (x + 284, ry + 4))
         ry += ROW_H
 
         ry += 12
@@ -848,6 +916,14 @@ def handle_click(state, mx, my, rect, sub_tab, config=None):
         plus_rect = getattr(state, "_offset_plus_rect", None)
         if plus_rect and plus_rect.collidepoint(mx, my):
             state.heading_offset += 0.5
+            return None
+        stale_minus_rect = getattr(state, "_stale_minus_rect", None)
+        if stale_minus_rect and stale_minus_rect.collidepoint(mx, my):
+            _adjust_stale_age(config, -5.0)
+            return None
+        stale_plus_rect = getattr(state, "_stale_plus_rect", None)
+        if stale_plus_rect and stale_plus_rect.collidepoint(mx, my):
+            _adjust_stale_age(config, 5.0)
             return None
     elif sub_tab == 3:
         _handle_filters_click(state, mx, my, config)
