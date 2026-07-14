@@ -152,6 +152,15 @@ def _init_state(polars_dir: str, measured_dir: str, routes_dir: str, config: Con
     state.chart_center_lon = config.chart_lon
     state.chart_zoom = config.chart_zoom
 
+    # Build the GPS motion-artifact filter from the [filter] config section.
+    from signalk.filters import FilterConfig, FilterManager
+
+    filter_cfg = FilterConfig(
+        enabled=config.filter_enabled,
+        cutoffs=dict(config.filter_cutoffs),
+    )
+    state.filter_manager = FilterManager(filter_cfg)
+
     return state
 
 
@@ -347,7 +356,9 @@ def _render_frame(
         elif state.active_nav == "replay":
             _render_replay_page(screen, font, font_sm, state, content_rect, config)
         elif state.active_nav == "diagnostics":
-            diagnostics.render(screen, font, font_sm, state, content_rect, state.active_tab)
+            diagnostics.render(
+                screen, font, font_sm, state, content_rect, state.active_tab, config=config
+            )
         elif state.active_nav == "settings":
             settings.render(
                 screen, font, font_sm, state, content_rect, state.active_tab, config=config

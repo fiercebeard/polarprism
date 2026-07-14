@@ -91,6 +91,23 @@ class TestConfig:
         finally:
             os.unlink(path)
 
+    def test_default_stale_value_age_sec(self):
+        cfg = load_config("/nonexistent/path.toml")
+        assert cfg.stale_value_age_sec == 60.0
+
+    def test_load_config_stale_value_age_sec(self):
+        with tempfile.NamedTemporaryFile(
+            suffix=".toml", mode="w", delete=False, encoding="utf-8"
+        ) as f:
+            f.write("[display]\nstale_value_age_sec = 120\n")
+            f.flush()
+            path = f.name
+        try:
+            cfg = load_config(path)
+            assert cfg.stale_value_age_sec == 120.0
+        finally:
+            os.unlink(path)
+
 
 class TestDiscoverSaildef:
     def test_empty_dir(self):

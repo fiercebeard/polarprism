@@ -267,3 +267,13 @@ class ReplaySession:
         wall = _wall_from_ts(ts_str)
         state.nmea_log.append(f"replay {wall}")
         state.connected = True
+
+        # Feed low-pass filters for COG/SOG so pages see filtered values
+        # during replay too. Replay emits at ~1 Hz (PERF_LOG_INTERVAL),
+        # matching the filter's sample_hz default.
+        fm = getattr(state, "filter_manager", None)
+        if fm is not None:
+            for sig in ("cogTrue", "speedOverGround"):
+                v = state.values.get(sig)
+                if v is not None and isinstance(v, (int, float)):
+                    fm.update(sig, float(v), dt=1.0)

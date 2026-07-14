@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,11 @@ CURRENT_LEEWAY_MIN_STW_KTS = 0.5
 DRIFT_CALC_MIN_SOG_KTS = 0.1
 HEADING_OFFSET_INCREMENT_DEG = 0.5
 VARIATION_DELTA_WARN_DEG = 0.5
+STALE_VALUE_AGE_SEC = 60.0
+
+# Signals eligible for low-pass filtering (GPS motion-artifact suppression).
+# Keys match the state.values keys used throughout the app.
+FILTERABLE_SIGNALS = ["cogTrue", "speedOverGround"]
 
 PATH_MAP = {
     "headingMagnetic": "navigation.headingMagnetic",
@@ -61,6 +67,7 @@ class State:
         self.values: dict[str, Any] = {}
         self.sources: dict[str, str] = {}
         self.timestamps: dict[str, str] = {}
+        self.last_update: dict[str, float] = {}
         self.position: dict[str, float | None] = {"lat": None, "lon": None}
         self.vessel_name = ""
         self.last_log_time: float = 0.0
@@ -161,6 +168,11 @@ class State:
         self._pb_combine_rect: tuple[int, int, int, int] | None = None
         self._pb_build_status: str = ""
 
+        # GPS motion-artifact filtering. ``filter_manager`` is created in
+        # main._init_state from the [filter] config; ``filtered`` is a
+        # convenience accessor dict updated alongside state.values.
+        self.filter_manager: Any | None = None
+
 
 def rad_to_deg(rad: float | None) -> float | None:
     if rad is None:
@@ -236,6 +248,9 @@ def update_from_delta(state: State, msg: str) -> None:
     ts = datetime.now(UTC).strftime("%H:%M:%S")
     state.nmea_log.append(f"{ts} {msg.strip()[:200]}")
 
+    # Low-pass filter manager (GPS motion-artifact suppression).
+    fm = getattr(state, "filter_manager", None)
+
     if data.get("vessels"):
         for vessel in data["vessels"].values():
             nav = vessel.get("navigation", {})
@@ -254,6 +269,7 @@ def update_from_delta(state: State, msg: str) -> None:
                     leaf = obj[leaf_key]
                     if "value" in leaf and leaf["value"] is not None:
                         state.values[key] = leaf["value"]
+                        state.last_update[key] = time.time()
                         src = leaf.get("$source")
                         if src:
                             state.sources[key] = src
@@ -291,6 +307,7 @@ def update_from_delta(state: State, msg: str) -> None:
                         state.values[key] = val
                         state.sources[key] = source_label
                         state.timestamps[key] = timestamp
+                        state.last_update[key] = time.time()
                         break
                 if path == "navigation.position" and isinstance(val, dict):
                     if val.get("latitude") is not None:
@@ -306,6 +323,14 @@ def update_from_delta(state: State, msg: str) -> None:
                 ):
                     _logged_unknown_paths.add(path)
                     _log_unknown_path(path, val)
+
+    # Update low-pass filters for COG/SOG if filtering is configured.
+    if fm is not None:
+        dt = 1.0  # Signal K stream is ~1 Hz; time-aware filter handles it
+        for sig in FILTERABLE_SIGNALS:
+            v = state.values.get(sig)
+            if v is not None and isinstance(v, (int, float)):
+                fm.update(sig, float(v), dt)
 
 
 _logged_unknown_paths: set[str] = set()
@@ -356,6 +381,77 @@ def polar_sail_mismatch(state: State) -> str | None:
     active_desc = ", ".join(state.active_sails)
     polar_desc = ", ".join(polar_sails)
     return f"polar [{polar_desc}] != sail [{active_desc}]"
+
+
+def filtered_value(state: State, signal: str) -> float | None:
+    """Return the filtered value for a filterable signal, else the raw value.
+
+    Pages and computations call this instead of ``state.values.get(signal)``
+    for COG/SOG so they automatically use the low-pass-filtered value when
+    filtering is enabled and fall back to raw otherwise.
+    """
+    raw = state.values.get(signal)
+    fm = getattr(state, "filter_manager", None)
+    if fm is None:
+        return raw
+    result: float | None = fm.get(signal, raw)
+    return result
+
+
+def signal_age(state: State, key: str, now: float | None = None) -> float | None:
+    """Seconds since ``key`` was last updated, or None if never received.
+
+    ``now`` defaults to :func:`time.time`; pass an explicit value for tests.
+    """
+    t = state.last_update.get(key)
+    if t is None:
+        return None
+    return (now if now is not None else time.time()) - t
+
+
+def is_stale(
+    state: State, key: str, now: float | None = None, threshold: float = STALE_VALUE_AGE_SEC
+) -> bool:
+    """True if ``key`` was last updated more than ``threshold`` seconds ago.
+
+    A signal that has never been received is *not* stale by this definition —
+    callers should treat ``signal_age(...) is None`` separately when they want
+    to distinguish "never seen" from "seen but expired".
+    """
+    age = signal_age(state, key, now)
+    if age is None:
+        return False
+    return age > threshold
+
+
+def calc_age(
+    state: State, keys: list[str], now: float | None = None
+) -> tuple[float | None, float | None]:
+    """Freshest (age, timestamp) across ``keys`` for a derived/CALC row.
+
+    Returns ``(None, None)`` when no input has ever been received, so callers
+    can hide the row. The freshest input is the one with the smallest age
+    (largest ``last_update`` timestamp).
+    """
+    stamps = [t for k in keys if (t := state.last_update.get(k)) is not None]
+    if not stamps:
+        return None, None
+    latest = max(stamps)
+    age = (now if now is not None else time.time()) - latest
+    return age, latest
+
+
+def is_calc_stale(
+    state: State,
+    keys: list[str],
+    now: float | None = None,
+    threshold: float = STALE_VALUE_AGE_SEC,
+) -> bool:
+    """True if every input in ``keys`` is stale (or never received)."""
+    age, _ = calc_age(state, keys, now)
+    if age is None:
+        return True
+    return age > threshold
 
 
 def _refresh_route_cache(state: State, vmc_kts: float | None = None) -> None:

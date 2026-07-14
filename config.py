@@ -8,7 +8,10 @@ from typing import Any
 try:
     import tomllib
 except ModuleNotFoundError:
-    tomllib = None  # type: ignore[assignment]
+    try:
+        import tomli as tomllib  # type: ignore[assignment]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
 
 DEFAULT_SK_WS_URL = "ws://localhost:3000/signalk/v1/stream"
 # Lake Erie — shipped sample location. Override [chart] in polarprism.toml.
@@ -17,6 +20,8 @@ DEFAULT_CHART_LON = -81.73
 DEFAULT_CHART_ZOOM = 9
 DEFAULT_FPS = 30
 DEFAULT_TILE_ONLINE = True
+# Seconds a signal can go silent before its Diagnostics row is hidden.
+DEFAULT_STALE_VALUE_AGE_SEC = 60.0
 # Opaque base map (land/water/coastline). The seamark layer is a transparent
 # overlay drawn on top of it.
 DEFAULT_TILE_BASE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -99,6 +104,7 @@ class Config:
     auto_convert_raw: bool = False
     local_tz_offset: float = 0.0
     fps: int = DEFAULT_FPS
+    stale_value_age_sec: float = DEFAULT_STALE_VALUE_AGE_SEC
     tile_online: bool = DEFAULT_TILE_ONLINE
     tile_base_url: str = DEFAULT_TILE_BASE_URL
     tile_url: str = DEFAULT_TILE_URL
@@ -119,6 +125,10 @@ class Config:
     coverage_min_samples: int = 3
     coverage_min_stw_kts: float = 2.0
     coverage_min_aws_kts: float = 4.0
+    # GPS motion-artifact filtering (low-pass on COG/SOG). See [filter] in
+    # polarprism.toml.example. Cutoffs in Hz; 0.05 Hz = 20 s period.
+    filter_enabled: bool = False
+    filter_cutoffs: dict[str, float] = field(default_factory=dict)
     _source_path: str | None = None
 
     def __post_init__(self) -> None:
@@ -187,6 +197,8 @@ def load_config(override_path: str | None = None) -> Config:
         display = data.get("display", {})
         if "fps" in display:
             cfg.fps = int(display["fps"])
+        if "stale_value_age_sec" in display:
+            cfg.stale_value_age_sec = float(display["stale_value_age_sec"])
 
         tile = data.get("tile", {})
         if "online" in tile:
@@ -251,6 +263,15 @@ def load_config(override_path: str | None = None) -> Config:
             cfg.coverage_min_stw_kts = float(coverage_cfg["min_stw_kts"])
         if "min_aws_kts" in coverage_cfg:
             cfg.coverage_min_aws_kts = float(coverage_cfg["min_aws_kts"])
+
+        filter_cfg = data.get("filter", {})
+        if "enabled" in filter_cfg:
+            cfg.filter_enabled = bool(filter_cfg["enabled"])
+        cutoffs_raw = filter_cfg.get("cutoffs", {})
+        if isinstance(cutoffs_raw, dict):
+            cfg.filter_cutoffs = {
+                k: float(v) for k, v in cutoffs_raw.items() if isinstance(v, (int, float))
+            }
 
     cfg.__post_init__()
     return cfg
@@ -468,6 +489,17 @@ def save_config(config: Config) -> None:
     coverage_section["min_samples"] = config.coverage_min_samples
     coverage_section["min_stw_kts"] = config.coverage_min_stw_kts
     coverage_section["min_aws_kts"] = config.coverage_min_aws_kts
+
+    # Persist [filter] section
+    filter_section = existing.setdefault("filter", {})
+    filter_section["enabled"] = config.filter_enabled
+    if config.filter_cutoffs:
+        filter_section["cutoffs"] = dict(config.filter_cutoffs)
+
+    # Persist [display] section
+    display_section = existing.setdefault("display", {})
+    display_section["fps"] = config.fps
+    display_section["stale_value_age_sec"] = config.stale_value_age_sec
 
     if not path:
         path = os.path.join(os.getcwd(), "polarprism.toml")

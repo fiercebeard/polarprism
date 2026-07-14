@@ -153,7 +153,7 @@ NAV_TABS = {
     "builder": ["Builder"],
     "replay": [],
     "diagnostics": ["Values", "NMEA Log"],
-    "settings": ["SignalK", "Sails", "Display", "Setup"],
+    "settings": ["SignalK", "Sails", "Display", "Filters", "Setup"],
 }
 
 NAV_WIDTH_RATIO = 0.20

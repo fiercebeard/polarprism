@@ -3,7 +3,7 @@ from collections.abc import Callable
 
 import pygame
 
-from signalk.models import State, derive_true_heading
+from signalk.models import State, derive_true_heading, filtered_value
 from theme import (
     CHART_BORDER,
     GRID,
@@ -146,7 +146,7 @@ def _draw_vessel(
 
     heading_for_rotation = state.values.get("headingMagnetic")
     if heading_for_rotation is None:
-        heading_for_rotation = state.values.get("cogTrue") or 0.0
+        heading_for_rotation = filtered_value(state, "cogTrue") or 0.0
 
     line_len = max(w, h) * 0.8
     bearing_keys = ["headingMagnetic", "headingTrue", "cogTrue", "apTargetMagnetic"]
@@ -158,7 +158,12 @@ def _draw_vessel(
         "courseRhumblineBearingTrue",
     ]
     for key in bearing_keys:
-        val = derive_true_heading(state) if key == "headingTrue" else state.values.get(key)
+        if key == "headingTrue":
+            val = derive_true_heading(state)
+        elif key in ("cogTrue", "speedOverGround"):
+            val = filtered_value(state, key)
+        else:
+            val = state.values.get(key)
         if val is None:
             continue
         color = SIGNAL_COLORS.get(key, TEXT_WHITE)
