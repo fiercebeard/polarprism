@@ -271,7 +271,7 @@ def update_from_delta(state: State, msg: str) -> None:
                         state.values[key] = leaf["value"]
                         state.last_update[key] = time.time()
                         src = leaf.get("$source")
-                        if src:
+                        if src and key not in state.sources:
                             state.sources[key] = src
                         ts = leaf.get("timestamp")
                         if ts:
@@ -305,7 +305,8 @@ def update_from_delta(state: State, msg: str) -> None:
                 for key, sk_path in PATH_MAP.items():
                     if path == sk_path:
                         state.values[key] = val
-                        state.sources[key] = source_label
+                        if key not in state.sources:
+                            state.sources[key] = source_label
                         state.timestamps[key] = timestamp
                         state.last_update[key] = time.time()
                         break

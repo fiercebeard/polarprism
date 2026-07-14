@@ -303,6 +303,41 @@ def test_update_from_delta_skips_null_value_no_last_update():
     assert "headingMagnetic" not in state.last_update
 
 
+def test_update_from_delta_updates_form_keeps_first_source():
+    """Regression: a second source sending the same signal must not overwrite
+    state.sources[key] — otherwise the row jumps between device sections on
+    the Diagnostics page every time a different source sends a delta."""
+    state = State()
+    msg1 = (
+        '{"updates":[{"$source":"src1","timestamp":"2024-01-01T00:00:00Z",'
+        '"values":[{"path":"navigation.magneticVariation","value":0.1}]}]}'
+    )
+    update_from_delta(state, msg1)
+    assert state.sources["magneticVariation"] == "src1"
+    msg2 = (
+        '{"updates":[{"$source":"src2","timestamp":"2024-01-01T00:01:00Z",'
+        '"values":[{"path":"navigation.magneticVariation","value":0.2}]}]}'
+    )
+    update_from_delta(state, msg2)
+    assert state.sources["magneticVariation"] == "src1"
+    assert state.values["magneticVariation"] == 0.2
+
+
+def test_update_from_delta_vessels_form_keeps_first_source():
+    state = State()
+    msg1 = (
+        '{"vessels":{"self":{"navigation":{"magneticVariation":{"value":0.1,"$source":"src1"}}}}}'
+    )
+    update_from_delta(state, msg1)
+    assert state.sources["magneticVariation"] == "src1"
+    msg2 = (
+        '{"vessels":{"self":{"navigation":{"magneticVariation":{"value":0.2,"$source":"src2"}}}}}'
+    )
+    update_from_delta(state, msg2)
+    assert state.sources["magneticVariation"] == "src1"
+    assert state.values["magneticVariation"] == 0.2
+
+
 def test_signal_age_none_when_never_received():
     state = State()
     assert signal_age(state, "headingMagnetic") is None
