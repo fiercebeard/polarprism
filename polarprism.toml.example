@@ -22,6 +22,9 @@ default_zoom = 9
 
 [display]
 # fps = 30
+# Seconds a signal can go silent before its Diagnostics row is hidden.
+# 0 = always show (never hide stale rows). Default = 60.
+# stale_value_age_sec = 60
 
 [tile]
 # Fetch missing map tiles from the network
